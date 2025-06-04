@@ -10,6 +10,7 @@ import (
 	"BE-ABSTI-CLOCKIN/internal/models"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func RegisterDashboardRoutes(r *gin.RouterGroup) {
@@ -36,7 +37,7 @@ func getAttendanceStats(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
-	userClaims := claims.(map[string]interface{})
+	userClaims := claims.(jwt.MapClaims)
 	role, _ := userClaims["role"].(string)
 	if role != "hr" && role != "admin" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: HR or admin only"})
@@ -79,7 +80,7 @@ func getAbsenceStats(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
-	userClaims := claims.(map[string]interface{})
+	userClaims := claims.(jwt.MapClaims)
 	role, _ := userClaims["role"].(string)
 	if role != "hr" && role != "admin" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: HR or admin only"})
@@ -113,7 +114,7 @@ func getUserStats(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
-	userClaims := claims.(map[string]interface{})
+	userClaims := claims.(jwt.MapClaims)
 	role, _ := userClaims["role"].(string)
 	if role != "hr" && role != "admin" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: HR or admin only"})
@@ -151,7 +152,7 @@ func updateCheckinForHR(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
-	userClaims := claims.(map[string]interface{})
+	userClaims := claims.(jwt.MapClaims)
 	role, _ := userClaims["role"].(string)
 	if role != "hr" && role != "admin" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: HR or admin only"})
@@ -228,7 +229,7 @@ func getAuditLogs(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
-	userClaims := claims.(map[string]interface{})
+	userClaims := claims.(jwt.MapClaims)
 	role, _ := userClaims["role"].(string)
 	if role != "hr" && role != "admin" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: HR or admin only"})

@@ -32,6 +32,9 @@ services:
       DB_USER: abstiuser
       DB_PASSWORD: abstipass
       DB_NAME: absti
+      POSTGRES_DB: absti
+      POSTGRES_USER: abstiuser
+      POSTGRES_PASSWORD: abstipass
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI}

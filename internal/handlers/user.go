@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 
 	"BE-ABSTI-CLOCKIN/internal/db"
 	"BE-ABSTI-CLOCKIN/internal/models"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func RegisterUserRoutes(r *gin.RouterGroup) {
@@ -31,7 +33,7 @@ func getMe(c *gin.Context) {
 		c.JSON(401, gin.H{"error": "Unauthorized"})
 		return
 	}
-	userClaims := claims.(map[string]interface{})
+	userClaims := claims.(jwt.MapClaims)
 	email, ok := userClaims["email"].(string)
 	if !ok {
 		c.JSON(401, gin.H{"error": "Invalid token"})
@@ -76,13 +78,16 @@ func updateUserCheckinConfig(c *gin.Context) {
 		c.JSON(401, gin.H{"error": "Unauthorized"})
 		return
 	}
-	userClaims := claims.(map[string]interface{})
+	id := c.Param("id")
+	userClaims := claims.(jwt.MapClaims)
 	role, _ := userClaims["role"].(string)
-	if role != "hr" && role != "admin" {
-		c.JSON(403, gin.H{"error": "Forbidden: HR or admin only"})
+	userID, _ := userClaims["user_id"].(float64)
+
+	if role != "hr" && role != "admin" && id != fmt.Sprintf("%.0f", userID) {
+		c.JSON(403, gin.H{"error": "Forbidden: can only update your own config"})
 		return
 	}
-	id := c.Param("id")
+
 	var user models.User
 	if err := db.DB.First(&user, id).Error; err != nil {
 		c.JSON(404, gin.H{"error": "User not found"})
@@ -98,6 +103,9 @@ func updateUserCheckinConfig(c *gin.Context) {
 	}
 	if req.Timezone != "" {
 		user.Timezone = req.Timezone
+	}
+	if req.NotificationOffsetMin > 0 {
+		user.NotificationOffsetMin = req.NotificationOffsetMin
 	}
 	if err := db.DB.Save(&user).Error; err != nil {
 		c.JSON(500, gin.H{"error": "Failed to update user", "details": err.Error()})

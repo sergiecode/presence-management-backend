@@ -6,11 +6,11 @@ type User struct {
 	// CreatedAt time.Time // add manually if you want it in docs
 	// UpdatedAt time.Time // add manually if you want it in docs
 	// DeletedAt gorm.DeletedAt `gorm:"index"` // add manually if you want it in docs
-	Email            string `gorm:"uniqueIndex" json:"email"`
-	Name             string `json:"name"`
-	Picture          string `json:"picture"`
-	Role             string `json:"role" gorm:"default:employee"`
-	CheckinStartTime string `json:"checkin_start_time" gorm:"type:varchar(8);default:''"`
-	Timezone         string `json:"timezone" gorm:"type:varchar(64);default:''"`
-	// Add more fields as needed
+	Email                 string `gorm:"uniqueIndex" json:"email"`
+	Name                  string `json:"name"`
+	Picture               string `json:"picture"`
+	Role                  string `json:"role" gorm:"default:employee"`
+	CheckinStartTime      string `json:"checkin_start_time" gorm:"type:varchar(8);default:''"`
+	Timezone              string `json:"timezone" gorm:"type:varchar(64);default:''"`
+	NotificationOffsetMin int    `json:"notification_offset_min" gorm:"default:10"` // minutes before check-in
 }

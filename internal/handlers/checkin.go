@@ -7,7 +7,10 @@ import (
 	"BE-ABSTI-CLOCKIN/internal/db"
 	"BE-ABSTI-CLOCKIN/internal/models"
 
+	"log"
+
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func RegisterCheckinRoutes(r *gin.RouterGroup) {
@@ -28,6 +31,8 @@ func RegisterCheckinRoutes(r *gin.RouterGroup) {
 // @Failure 401 {object} gin.H
 // @Router /api/checkins [post]
 func submitCheckin(c *gin.Context) {
+	log.Println("submitCheckin called")
+
 	var req models.CheckinRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request", "details": err.Error()})
@@ -35,15 +40,15 @@ func submitCheckin(c *gin.Context) {
 	}
 	claims, ok := c.Get("user")
 	if !ok {
+		log.Println("No JWT claims found")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
-	userClaims := claims.(map[string]interface{})
-	userID, ok := userClaims["user_id"].(float64) // JWT lib returns float64 for numbers
-	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
-		return
-	}
+	userClaims := claims.(jwt.MapClaims)
+	log.Printf("JWT claims: %+v\n", userClaims)
+	_, _ = userClaims["role"].(string)
+	userID, _ := userClaims["user_id"].(float64)
+	log.Printf("Looking up user with ID: %v", userID)
 
 	// Fetch user for check-in config
 	var user models.User
@@ -54,9 +59,28 @@ func submitCheckin(c *gin.Context) {
 
 	// Determine check-in time (UTC now or provided)
 	now := time.Now().UTC()
-	checkinTime := now.Format("15:04:05")
+	var checkinDT time.Time
 	if req.Time != "" {
-		checkinTime = req.Time
+		// Try to parse as RFC3339 (full timestamp)
+		t, err := time.Parse(time.RFC3339, req.Time)
+		if err == nil {
+			checkinDT = t
+		} else {
+			// Fallback: treat as "HH:MM:SS" and combine with date
+			checkinDateTimeStr := req.Date + "T" + req.Time
+			loc, err := time.LoadLocation(user.Timezone)
+			if err != nil {
+				loc = time.UTC
+			}
+			checkinDT, err = time.ParseInLocation("2006-01-02T15:04:05", checkinDateTimeStr, loc)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid check-in time"})
+				return
+			}
+		}
+	} else {
+		// Default: use now
+		checkinDT = now.In(time.UTC)
 	}
 
 	// Determine user's timezone and threshold
@@ -74,16 +98,8 @@ func submitCheckin(c *gin.Context) {
 	}
 
 	// Parse check-in time in user's local tz
-	dateStr := req.Date
-	if dateStr == "" {
-		dateStr = now.In(loc).Format("2006-01-02")
-	}
-	checkinDateTimeStr := dateStr + "T" + checkinTime
-	checkinDT, err := time.ParseInLocation("2006-01-02T15:04:05", checkinDateTimeStr, loc)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid check-in time"})
-		return
-	}
+	dateStr := checkinDT.In(loc).Format("2006-01-02")
+
 	// Parse threshold time for that day
 	thresholdDT, err := time.ParseInLocation("2006-01-02T15:04", dateStr+"T"+startTime, loc)
 	if err != nil {
@@ -108,7 +124,7 @@ func submitCheckin(c *gin.Context) {
 		checkin = models.Checkin{
 			UserID:         uint(userID),
 			Date:           dateStr,
-			Time:           checkinTime,
+			Time:           checkinDT,
 			LocationType:   req.LocationType,
 			LocationDetail: req.LocationDetail,
 			GPSLat:         req.GPSLat,
@@ -124,7 +140,7 @@ func submitCheckin(c *gin.Context) {
 		}
 	} else {
 		// Exists, update
-		checkin.Time = checkinTime
+		checkin.Time = checkinDT
 		checkin.LocationType = req.LocationType
 		checkin.LocationDetail = req.LocationDetail
 		checkin.GPSLat = req.GPSLat
@@ -142,7 +158,7 @@ func submitCheckin(c *gin.Context) {
 		ID:             checkin.ID,
 		UserID:         checkin.UserID,
 		Date:           checkin.Date,
-		Time:           checkin.Time,
+		Time:           checkin.Time.Format(time.RFC3339),
 		LocationType:   checkin.LocationType,
 		LocationDetail: checkin.LocationDetail,
 		GPSLat:         checkin.GPSLat,
@@ -168,12 +184,9 @@ func getCheckinHistory(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
-	userClaims := claims.(map[string]interface{})
-	userID, ok := userClaims["user_id"].(float64)
-	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
-		return
-	}
+	userClaims := claims.(jwt.MapClaims)
+	_, _ = userClaims["role"].(string)
+	userID, _ := userClaims["user_id"].(float64)
 	var checkins []models.Checkin
 	err := db.DB.Where("user_id = ?", uint(userID)).Order("date desc").Find(&checkins).Error
 	if err != nil {
@@ -211,12 +224,9 @@ func getTodayCheckin(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
-	userClaims := claims.(map[string]interface{})
-	userID, ok := userClaims["user_id"].(float64)
-	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
-		return
-	}
+	userClaims := claims.(jwt.MapClaims)
+	_, _ = userClaims["role"].(string)
+	userID, _ := userClaims["user_id"].(float64)
 	today := time.Now().Format("2006-01-02")
 	var checkin models.Checkin
 	err := db.DB.Where("user_id = ? AND date = ?", uint(userID), today).First(&checkin).Error
