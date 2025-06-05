@@ -13,4 +13,6 @@ type User struct {
 	CheckinStartTime      string `json:"checkin_start_time" gorm:"type:varchar(8);default:''"`
 	Timezone              string `json:"timezone" gorm:"type:varchar(64);default:''"`
 	NotificationOffsetMin int    `json:"notification_offset_min" gorm:"default:10"` // minutes before check-in
+	PendingApproval       bool   `json:"pending_approval" gorm:"default:true"`
+	Deactivated           bool   `json:"deactivated" gorm:"default:false"`
 }

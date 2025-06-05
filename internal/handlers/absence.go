@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -17,6 +18,8 @@ func RegisterAbsenceRoutes(r *gin.RouterGroup) {
 	r.POST("/:id/documents", uploadAbsenceDocument)
 	r.GET("/:id/documents", getAbsenceDocuments)
 	r.PATCH("/:id/lock", lockAbsence)
+	r.GET("/all", listAllAbsences)
+	r.DELETE("/:id", deleteAbsence)
 }
 
 // @Summary Report absence/late/medical
@@ -295,4 +298,107 @@ func lockAbsence(c *gin.Context) {
 		CreatedAt: absence.CreatedAt.Format(time.RFC3339),
 	}
 	c.JSON(http.StatusOK, resp)
+}
+
+// @Summary List all absences (HR/admin)
+// @Description HR/admin only. Returns paginated list of all absences. Query params: page, page_size, user_id, date, type
+// @Tags absence
+// @Produce json
+// @Param page query int false "Page number (default 1)"
+// @Param page_size query int false "Page size (default 20)"
+// @Param user_id query int false "Filter by user ID"
+// @Param date query string false "Filter by date (YYYY-MM-DD)"
+// @Param type query string false "Filter by type (absence/late/medical)"
+// @Success 200 {object} []models.AbsenceResponse
+// @Failure 401 {object} gin.H
+// @Failure 403 {object} gin.H
+// @Router /api/absences/all [get]
+func listAllAbsences(c *gin.Context) {
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(401, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userClaims := claims.(map[string]interface{})
+	role, _ := userClaims["role"].(string)
+	if role != "hr" && role != "admin" {
+		c.JSON(403, gin.H{"error": "Forbidden: HR or admin only"})
+		return
+	}
+	page := 1
+	pageSize := 20
+	if v := c.Query("page"); v != "" {
+		fmt.Sscanf(v, "%d", &page)
+		if page < 1 {
+			page = 1
+		}
+	}
+	if v := c.Query("page_size"); v != "" {
+		fmt.Sscanf(v, "%d", &pageSize)
+		if pageSize < 1 || pageSize > 100 {
+			pageSize = 20
+		}
+	}
+	var absences []models.Absence
+	q := db.DB.Where("deleted = ?", false)
+	if v := c.Query("user_id"); v != "" {
+		q = q.Where("user_id = ?", v)
+	}
+	if v := c.Query("date"); v != "" {
+		q = q.Where("date = ?", v)
+	}
+	if v := c.Query("type"); v != "" {
+		q = q.Where("type = ?", v)
+	}
+	q = q.Order("date desc").Offset((page - 1) * pageSize).Limit(pageSize)
+	q.Find(&absences)
+	resp := make([]models.AbsenceResponse, len(absences))
+	for i, ab := range absences {
+		resp[i] = models.AbsenceResponse{
+			ID:        ab.ID,
+			UserID:    ab.UserID,
+			Date:      ab.Date,
+			Type:      ab.Type,
+			Reason:    ab.Reason,
+			FileURL:   ab.FileURL,
+			CreatedAt: ab.CreatedAt.Format(time.RFC3339),
+		}
+	}
+	c.JSON(200, resp)
+}
+
+// @Summary Soft delete absence (HR/admin)
+// @Description HR/admin only. Soft delete an absence by setting deleted=true.
+// @Tags absence
+// @Produce json
+// @Param id path int true "Absence ID"
+// @Success 200 {object} gin.H
+// @Failure 401 {object} gin.H
+// @Failure 403 {object} gin.H
+// @Failure 404 {object} gin.H
+// @Router /api/absences/{id} [delete]
+func deleteAbsence(c *gin.Context) {
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(401, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userClaims := claims.(map[string]interface{})
+	role, _ := userClaims["role"].(string)
+	if role != "hr" && role != "admin" {
+		c.JSON(403, gin.H{"error": "Forbidden: HR or admin only"})
+		return
+	}
+	id := c.Param("id")
+	var absence models.Absence
+	if err := db.DB.First(&absence, id).Error; err != nil || absence.Deleted {
+		c.JSON(404, gin.H{"error": "Absence not found"})
+		return
+	}
+	absence.Deleted = true
+	if err := db.DB.Save(&absence).Error; err != nil {
+		c.JSON(500, gin.H{"error": "Failed to delete absence", "details": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"message": "Absence deleted"})
 }

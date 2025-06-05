@@ -20,6 +20,7 @@ type Checkin struct {
 	LateReason     string    `json:"late_reason,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
+	Deleted        bool      `json:"deleted" gorm:"default:false"`
 }
 
 // NOTE: You must run a DB migration to convert the column type if you have existing data.

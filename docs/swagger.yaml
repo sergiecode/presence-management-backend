@@ -1,0 +1,1047 @@
+definitions:
+  gin.H:
+    additionalProperties: {}
+    type: object
+  models.AbsenceRequest:
+    properties:
+      date:
+        type: string
+      reason:
+        type: string
+      type:
+        enum:
+        - absence
+        - late
+        - medical
+        type: string
+    required:
+    - date
+    - reason
+    - type
+    type: object
+  models.AbsenceResponse:
+    properties:
+      created_at:
+        type: string
+      date:
+        type: string
+      file_url:
+        type: string
+      id:
+        type: integer
+      reason:
+        type: string
+      type:
+        type: string
+      user_id:
+        type: integer
+    type: object
+  models.AuditLog:
+    properties:
+      action:
+        description: e.g. "update_checkin"
+        type: string
+      entity_id:
+        description: e.g. checkin ID
+        type: integer
+      entity_type:
+        description: e.g. "checkin"
+        type: string
+      id:
+        type: integer
+      new_value:
+        description: JSON string of new checkin
+        type: string
+      old_value:
+        description: JSON string of old checkin
+        type: string
+      timestamp:
+        type: string
+      user_email:
+        description: Who made the change (HR/admin)
+        type: string
+    type: object
+  models.AuditLogListResponse:
+    properties:
+      logs:
+        items:
+          $ref: '#/definitions/models.AuditLog'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  models.CheckinConfigRequest:
+    properties:
+      checkin_start_time:
+        type: string
+      notification_offset_min:
+        type: integer
+      timezone:
+        type: string
+    type: object
+  models.CheckinRequest:
+    properties:
+      date:
+        type: string
+      gps_lat:
+        type: number
+      gps_long:
+        type: number
+      late_reason:
+        type: string
+      location_detail:
+        type: string
+      location_type:
+        enum:
+        - home
+        - office
+        - client
+        - temporary
+        type: string
+      notes:
+        type: string
+      time:
+        description: still accept string for backward compatibility
+        type: string
+    required:
+    - date
+    - location_type
+    type: object
+  models.CheckinResponse:
+    properties:
+      created_at:
+        type: string
+      date:
+        type: string
+      gps_lat:
+        type: number
+      gps_long:
+        type: number
+      id:
+        type: integer
+      late:
+        type: boolean
+      late_reason:
+        type: string
+      location_detail:
+        type: string
+      location_type:
+        type: string
+      notes:
+        type: string
+      time:
+        description: return as RFC3339 string for API clients
+        type: string
+      user_id:
+        type: integer
+    type: object
+  models.LockAbsenceRequest:
+    properties:
+      locked:
+        type: boolean
+    type: object
+  models.User:
+    properties:
+      checkin_start_time:
+        type: string
+      deactivated:
+        type: boolean
+      email:
+        description: |-
+          ID        uint      `gorm:"primaryKey"` // add manually if you want it in docs
+          CreatedAt time.Time // add manually if you want it in docs
+          UpdatedAt time.Time // add manually if you want it in docs
+          DeletedAt gorm.DeletedAt `gorm:"index"` // add manually if you want it in docs
+        type: string
+      id:
+        type: integer
+      name:
+        type: string
+      notification_offset_min:
+        description: minutes before check-in
+        type: integer
+      picture:
+        type: string
+      role:
+        type: string
+      timezone:
+        type: string
+    type: object
+info:
+  contact: {}
+paths:
+  /api/absences:
+    get:
+      description: Returns all absences for the authenticated user, newest first.
+        JWT required.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.AbsenceResponse'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Get user's absence history
+      tags:
+      - absence
+    post:
+      consumes:
+      - application/json
+      description: User reports absence, late arrival, or medical leave. JWT required.
+      parameters:
+      - description: Absence data
+        in: body
+        name: absence
+        required: true
+        schema:
+          $ref: '#/definitions/models.AbsenceRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.AbsenceResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/gin.H'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Report absence/late/medical
+      tags:
+      - absence
+  /api/absences/{id}:
+    delete:
+      description: HR/admin only. Soft delete an absence by setting deleted=true.
+      parameters:
+      - description: Absence ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/gin.H'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/gin.H'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Soft delete absence (HR/admin)
+      tags:
+      - absence
+    put:
+      consumes:
+      - application/json
+      description: User can update their own absence if not locked. HR/admin can update
+        any. JWT required.
+      parameters:
+      - description: Absence ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Absence data
+        in: body
+        name: absence
+        required: true
+        schema:
+          $ref: '#/definitions/models.AbsenceRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.AbsenceResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/gin.H'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/gin.H'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Update absence/late/medical
+      tags:
+      - absence
+  /api/absences/{id}/documents:
+    post:
+      consumes:
+      - multipart/form-data
+      description: User uploads a file for their own absence if not locked. Only PDF/JPG/PNG,
+        max 5MB. JWT required.
+      parameters:
+      - description: Absence ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Medical certificate file
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.AbsenceResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/gin.H'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/gin.H'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Upload medical certificate
+      tags:
+      - absence
+  /api/absences/{id}/lock:
+    patch:
+      consumes:
+      - application/json
+      description: HR/admin can lock or unlock an absence to prevent user edits. JWT
+        with hr/admin required.
+      parameters:
+      - description: Absence ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Lock state
+        in: body
+        name: lock
+        required: true
+        schema:
+          $ref: '#/definitions/models.LockAbsenceRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.AbsenceResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/gin.H'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/gin.H'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Lock or unlock an absence
+      tags:
+      - absence
+  /api/absences/all:
+    get:
+      description: 'HR/admin only. Returns paginated list of all absences. Query params:
+        page, page_size, user_id, date, type'
+      parameters:
+      - description: Page number (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Page size (default 20)
+        in: query
+        name: page_size
+        type: integer
+      - description: Filter by user ID
+        in: query
+        name: user_id
+        type: integer
+      - description: Filter by date (YYYY-MM-DD)
+        in: query
+        name: date
+        type: string
+      - description: Filter by type (absence/late/medical)
+        in: query
+        name: type
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.AbsenceResponse'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: List all absences (HR/admin)
+      tags:
+      - absence
+  /api/checkins:
+    get:
+      description: Returns all check-ins for the authenticated user, newest first.
+        JWT required.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.CheckinResponse'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Get user's check-in history
+      tags:
+      - checkin
+    post:
+      consumes:
+      - application/json
+      description: User submits daily check-in with location and optional GPS. Only
+        one per day. JWT required. If late, must provide reason.
+      parameters:
+      - description: Check-in data
+        in: body
+        name: checkin
+        required: true
+        schema:
+          $ref: '#/definitions/models.CheckinRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.CheckinResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/gin.H'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Submit daily check-in
+      tags:
+      - checkin
+  /api/checkins/{id}:
+    delete:
+      description: HR/admin only. Soft delete a check-in by setting deleted=true.
+      parameters:
+      - description: Check-in ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/gin.H'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/gin.H'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Soft delete check-in (HR/admin)
+      tags:
+      - checkin
+    put:
+      description: Users cannot update check-ins. Use HR endpoint.
+      responses:
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Not allowed
+      tags:
+      - checkin
+  /api/checkins/all:
+    get:
+      description: 'HR/admin only. Returns paginated list of all check-ins. Query
+        params: page, page_size, user_id, date'
+      parameters:
+      - description: Page number (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Page size (default 20)
+        in: query
+        name: page_size
+        type: integer
+      - description: Filter by user ID
+        in: query
+        name: user_id
+        type: integer
+      - description: Filter by date (YYYY-MM-DD)
+        in: query
+        name: date
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.CheckinResponse'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: List all check-ins (HR/admin)
+      tags:
+      - checkin
+  /api/checkins/today:
+    get:
+      description: Returns today's check-in for the authenticated user, or 404 if
+        none. JWT required.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.CheckinResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Get today's check-in
+      tags:
+      - checkin
+  /api/dashboard/absences:
+    get:
+      description: Returns absence stats (total absences, by type) for date range.
+        HR/admin only.
+      parameters:
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: startDate
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: endDate
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Get absence statistics
+      tags:
+      - dashboard
+  /api/dashboard/attendance:
+    get:
+      description: Returns attendance stats (total check-ins, on-time %, late %) for
+        date range. HR/admin only.
+      parameters:
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: startDate
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: endDate
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Get attendance statistics
+      tags:
+      - dashboard
+  /api/dashboard/audit-logs:
+    get:
+      description: Returns audit log entries. HR/admin only. Supports filtering by
+        user_email, action, entity_type, entity_id, date. Paginated.
+      parameters:
+      - description: User email
+        in: query
+        name: user_email
+        type: string
+      - description: Action
+        in: query
+        name: action
+        type: string
+      - description: Entity type
+        in: query
+        name: entity_type
+        type: string
+      - description: Entity ID
+        in: query
+        name: entity_id
+        type: integer
+      - description: Date (YYYY-MM-DD)
+        in: query
+        name: date
+        type: string
+      - description: Page number (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Page size (default 20)
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.AuditLogListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Get audit logs
+      tags:
+      - dashboard
+  /api/dashboard/checkins/{id}:
+    put:
+      consumes:
+      - application/json
+      description: HR or admin can update any user's check-in. Audit log is written.
+        JWT with hr/admin role required.
+      parameters:
+      - description: Check-in ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Check-in data
+        in: body
+        name: checkin
+        required: true
+        schema:
+          $ref: '#/definitions/models.CheckinRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.CheckinResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/gin.H'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/gin.H'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: HR/admin update check-in
+      tags:
+      - dashboard
+  /api/dashboard/checkins/export:
+    get:
+      description: 'HR/admin only. Export check-in data as Excel file. Filters: startDate,
+        endDate, userId'
+      parameters:
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: startDate
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: endDate
+        type: string
+      - description: User ID
+        in: query
+        name: userId
+        type: integer
+      produces:
+      - application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Export check-ins to Excel
+      tags:
+      - dashboard
+  /api/dashboard/users:
+    get:
+      description: Returns user stats (total, by role). HR/admin only.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Get user statistics
+      tags:
+      - dashboard
+  /api/users:
+    get:
+      description: 'Admin only. Returns paginated list of users. Query params: page,
+        page_size'
+      parameters:
+      - description: Page number (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Page size (default 20)
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.User'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: List all users
+      tags:
+      - users
+    post:
+      consumes:
+      - application/json
+      description: Admin only. Create a new user. Email must be unique.
+      parameters:
+      - description: User data
+        in: body
+        name: user
+        required: true
+        schema:
+          $ref: '#/definitions/models.User'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.User'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/gin.H'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Create user
+      tags:
+      - users
+  /api/users/{id}:
+    delete:
+      description: Admin only. Soft delete user by setting deactivated=true.
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/gin.H'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/gin.H'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Deactivate (soft delete) user
+      tags:
+      - users
+    get:
+      description: Admin only. Get user details by ID.
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.User'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/gin.H'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Get user by ID
+      tags:
+      - users
+    put:
+      consumes:
+      - application/json
+      description: Admin only. Update user details by ID.
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: User data
+        in: body
+        name: user
+        required: true
+        schema:
+          $ref: '#/definitions/models.User'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.User'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/gin.H'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/gin.H'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Update user
+      tags:
+      - users
+  /api/users/{id}/checkin-config:
+    put:
+      consumes:
+      - application/json
+      description: HR/admin can set per-user check-in start time and timezone. JWT
+        with hr/admin required.
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Check-in config
+        in: body
+        name: config
+        required: true
+        schema:
+          $ref: '#/definitions/models.CheckinConfigRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.User'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/gin.H'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/gin.H'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Update user's check-in config
+      tags:
+      - users
+  /api/users/me:
+    get:
+      description: Returns the authenticated user's profile info
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.User'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Get current user's profile
+      tags:
+      - users
+  /healthz:
+    get:
+      description: Check if the server is running
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Health check
+      tags:
+      - health
+swagger: "2.0"

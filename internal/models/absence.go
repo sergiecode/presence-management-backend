@@ -12,6 +12,7 @@ type Absence struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Locked    bool      `json:"locked" gorm:"default:false"`
+	Deleted   bool      `json:"deleted" gorm:"default:false"`
 }
 
 type AbsenceRequest struct {

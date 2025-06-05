@@ -75,7 +75,17 @@ func googleCallbackHandler(c *gin.Context) {
 	if user.Role == "" {
 		user.Role = "employee"
 	}
+	isNew := user.ID == 0
+	if isNew {
+		user.PendingApproval = true
+		user.Deactivated = true
+	}
 	db.DB.Save(&user)
+
+	if user.PendingApproval || user.Deactivated {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Account pending HR approval"})
+		return
+	}
 
 	jwtToken, err := jwtutil.GenerateToken(user.ID, user.Email, user.Role)
 	if err != nil {

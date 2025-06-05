@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -16,8 +17,10 @@ import (
 func RegisterCheckinRoutes(r *gin.RouterGroup) {
 	r.POST("/", submitCheckin)
 	r.GET("/", getCheckinHistory)
+	r.GET("/all", listAllCheckins)
 	r.GET("/today", getTodayCheckin)
 	r.PUT("/:id", updateCheckin)
+	r.DELETE("/:id", deleteCheckin)
 }
 
 // @Summary Submit daily check-in
@@ -255,4 +258,108 @@ func getTodayCheckin(c *gin.Context) {
 // @Failure 405 {object} gin.H
 func updateCheckin(c *gin.Context) {
 	c.JSON(405, gin.H{"error": "Updating check-ins is not allowed. Contact HR."})
+}
+
+// @Summary List all check-ins (HR/admin)
+// @Description HR/admin only. Returns paginated list of all check-ins. Query params: page, page_size, user_id, date
+// @Tags checkin
+// @Produce json
+// @Param page query int false "Page number (default 1)"
+// @Param page_size query int false "Page size (default 20)"
+// @Param user_id query int false "Filter by user ID"
+// @Param date query string false "Filter by date (YYYY-MM-DD)"
+// @Success 200 {object} []models.CheckinResponse
+// @Failure 401 {object} gin.H
+// @Failure 403 {object} gin.H
+// @Router /api/checkins/all [get]
+func listAllCheckins(c *gin.Context) {
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(401, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userClaims := claims.(jwt.MapClaims)
+	role, _ := userClaims["role"].(string)
+	if role != "hr" && role != "admin" {
+		c.JSON(403, gin.H{"error": "Forbidden: HR or admin only"})
+		return
+	}
+	page := 1
+	pageSize := 20
+	if v := c.Query("page"); v != "" {
+		fmt.Sscanf(v, "%d", &page)
+		if page < 1 {
+			page = 1
+		}
+	}
+	if v := c.Query("page_size"); v != "" {
+		fmt.Sscanf(v, "%d", &pageSize)
+		if pageSize < 1 || pageSize > 100 {
+			pageSize = 20
+		}
+	}
+	var checkins []models.Checkin
+	q := db.DB.Where("deleted = ?", false)
+	if v := c.Query("user_id"); v != "" {
+		q = q.Where("user_id = ?", v)
+	}
+	if v := c.Query("date"); v != "" {
+		q = q.Where("date = ?", v)
+	}
+	q = q.Order("date desc").Offset((page - 1) * pageSize).Limit(pageSize)
+	q.Find(&checkins)
+	resp := make([]models.CheckinResponse, len(checkins))
+	for i, ch := range checkins {
+		resp[i] = models.CheckinResponse{
+			ID:             ch.ID,
+			UserID:         ch.UserID,
+			Date:           ch.Date,
+			Time:           ch.Time.Format("2006-01-02T15:04:05Z07:00"),
+			LocationType:   ch.LocationType,
+			LocationDetail: ch.LocationDetail,
+			GPSLat:         ch.GPSLat,
+			GPSLong:        ch.GPSLong,
+			Notes:          ch.Notes,
+			Late:           ch.Late,
+			LateReason:     ch.LateReason,
+			CreatedAt:      ch.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		}
+	}
+	c.JSON(200, resp)
+}
+
+// @Summary Soft delete check-in (HR/admin)
+// @Description HR/admin only. Soft delete a check-in by setting deleted=true.
+// @Tags checkin
+// @Produce json
+// @Param id path int true "Check-in ID"
+// @Success 200 {object} gin.H
+// @Failure 401 {object} gin.H
+// @Failure 403 {object} gin.H
+// @Failure 404 {object} gin.H
+// @Router /api/checkins/{id} [delete]
+func deleteCheckin(c *gin.Context) {
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(401, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userClaims := claims.(jwt.MapClaims)
+	role, _ := userClaims["role"].(string)
+	if role != "hr" && role != "admin" {
+		c.JSON(403, gin.H{"error": "Forbidden: HR or admin only"})
+		return
+	}
+	id := c.Param("id")
+	var checkin models.Checkin
+	if err := db.DB.First(&checkin, id).Error; err != nil || checkin.Deleted {
+		c.JSON(404, gin.H{"error": "Check-in not found"})
+		return
+	}
+	checkin.Deleted = true
+	if err := db.DB.Save(&checkin).Error; err != nil {
+		c.JSON(500, gin.H{"error": "Failed to delete check-in", "details": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"message": "Check-in deleted"})
 }
