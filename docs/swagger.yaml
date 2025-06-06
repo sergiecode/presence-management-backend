@@ -164,6 +164,8 @@ definitions:
       notification_offset_min:
         description: minutes before check-in
         type: integer
+      pending_approval:
+        type: boolean
       picture:
         type: string
       role:
@@ -647,6 +649,41 @@ paths:
       summary: Get attendance statistics
       tags:
       - dashboard
+  /api/dashboard/attendance/rollcall:
+    get:
+      description: Returns a list of all active employees with their status for a
+        given date. HR/admin only.
+      parameters:
+      - description: Date (YYYY-MM-DD)
+        in: query
+        name: date
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/gin.H'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Get attendance roll call
+      tags:
+      - dashboard
   /api/dashboard/audit-logs:
     get:
       description: Returns audit log entries. HR/admin only. Supports filtering by
@@ -966,6 +1003,38 @@ paths:
           schema:
             $ref: '#/definitions/gin.H'
       summary: Update user
+      tags:
+      - users
+  /api/users/{id}/approve:
+    put:
+      description: HR/admin can approve a user by setting pending_approval=false and
+        deactivated=false.
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/gin.H'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/gin.H'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Approve user
       tags:
       - users
   /api/users/{id}/checkin-config:
