@@ -31,8 +31,8 @@ func RegisterDashboardRoutes(r *gin.RouterGroup) {
 // @Param startDate query string false "Start date (YYYY-MM-DD)"
 // @Param endDate query string false "End date (YYYY-MM-DD)"
 // @Success 200 {object} map[string]interface{}
-// @Failure 401 {object} gin.H
-// @Failure 403 {object} gin.H
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
 // @Router /api/dashboard/attendance [get]
 func getAttendanceStats(c *gin.Context) {
 	claims, ok := c.Get("user")
@@ -74,8 +74,8 @@ func getAttendanceStats(c *gin.Context) {
 // @Param startDate query string false "Start date (YYYY-MM-DD)"
 // @Param endDate query string false "End date (YYYY-MM-DD)"
 // @Success 200 {object} map[string]interface{}
-// @Failure 401 {object} gin.H
-// @Failure 403 {object} gin.H
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
 // @Router /api/dashboard/absences [get]
 func getAbsenceStats(c *gin.Context) {
 	claims, ok := c.Get("user")
@@ -108,8 +108,8 @@ func getAbsenceStats(c *gin.Context) {
 // @Tags dashboard
 // @Produce json
 // @Success 200 {object} map[string]interface{}
-// @Failure 401 {object} gin.H
-// @Failure 403 {object} gin.H
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
 // @Router /api/dashboard/users [get]
 func getUserStats(c *gin.Context) {
 	claims, ok := c.Get("user")
@@ -144,10 +144,10 @@ func getUserStats(c *gin.Context) {
 // @Param id path int true "Check-in ID"
 // @Param checkin body models.CheckinRequest true "Check-in data"
 // @Success 200 {object} models.CheckinResponse
-// @Failure 400 {object} gin.H
-// @Failure 401 {object} gin.H
-// @Failure 403 {object} gin.H
-// @Failure 404 {object} gin.H
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
 // @Router /api/dashboard/checkins/{id} [put]
 func updateCheckinForHR(c *gin.Context) {
 	claims, ok := c.Get("user")
@@ -163,7 +163,7 @@ func updateCheckinForHR(c *gin.Context) {
 	}
 	var req models.CheckinRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request", "details": err.Error()})
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid request", Details: err.Error()})
 		return
 	}
 	id := c.Param("id")
@@ -223,8 +223,8 @@ func updateCheckinForHR(c *gin.Context) {
 // @Param page query int false "Page number (default 1)"
 // @Param page_size query int false "Page size (default 20)"
 // @Success 200 {object} models.AuditLogListResponse
-// @Failure 401 {object} gin.H
-// @Failure 403 {object} gin.H
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
 // @Router /api/dashboard/audit-logs [get]
 func getAuditLogs(c *gin.Context) {
 	claims, ok := c.Get("user")
@@ -289,8 +289,8 @@ func getAuditLogs(c *gin.Context) {
 // @Param endDate query string false "End date (YYYY-MM-DD)"
 // @Param userId query int false "User ID"
 // @Success 200 {file} file
-// @Failure 401 {object} gin.H
-// @Failure 403 {object} gin.H
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
 // @Router /api/dashboard/checkins/export [get]
 func exportCheckinsToExcel(c *gin.Context) {
 	claims, ok := c.Get("user")
@@ -366,9 +366,9 @@ func parseDateRange(c *gin.Context) (string, string) {
 // @Produce json
 // @Param date query string true "Date (YYYY-MM-DD)"
 // @Success 200 {object} []map[string]interface{}
-// @Failure 400 {object} gin.H
-// @Failure 401 {object} gin.H
-// @Failure 403 {object} gin.H
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
 // @Router /api/dashboard/attendance/rollcall [get]
 func getAttendance(c *gin.Context) {
 	claims, ok := c.Get("user")

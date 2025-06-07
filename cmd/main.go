@@ -2,6 +2,7 @@ package main
 
 import (
 	"BE-ABSTI-CLOCKIN/internal/handlers"
+	"fmt"
 	"log"
 	"os"
 
@@ -16,7 +17,42 @@ import (
 	"github.com/joho/godotenv"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
+	"golang.org/x/crypto/bcrypt"
 )
+
+func ensureAdminUser() {
+	var admin models.User
+	err := db.DB.Where("role = ? AND deactivated = ?", "admin", false).First(&admin).Error
+	if err == nil {
+		// Ensure admin is not pending approval or deactivated
+		if admin.PendingApproval || admin.Deactivated {
+			admin.PendingApproval = false
+			admin.Deactivated = false
+			db.DB.Save(&admin)
+			log.Println("Admin user re-activated and approved")
+		}
+		log.Println("Admin user already exists")
+		return
+	}
+	// If not found, create admin
+	hash, err := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
+	if err != nil {
+		log.Fatalf("failed to hash admin password: %v", err)
+	}
+	admin = models.User{
+		Email:           "admin@absti.com",
+		Name:            "Admin",
+		Role:            "admin",
+		PasswordHash:    string(hash),
+		EmailConfirmed:  true,
+		PendingApproval: false,
+		Deactivated:     false,
+	}
+	if err := db.DB.Where(models.User{Email: admin.Email}).FirstOrCreate(&admin).Error; err != nil {
+		log.Fatalf("failed to create admin user: %v", err)
+	}
+	log.Println("Admin user created or already present")
+}
 
 func main() {
 	err := godotenv.Load()
@@ -28,18 +64,25 @@ func main() {
 		log.Fatalf("failed to connect to database: %v", err)
 	}
 
-	if err := db.DB.AutoMigrate(&models.User{}, &models.Checkin{}, &models.Absence{}, &models.AuditLog{}); err != nil {
+	if err := db.DB.AutoMigrate(&models.User{}, &models.Checkin{}, &models.Absence{}, &models.AuditLog{}, &models.RefreshToken{}); err != nil {
 		log.Fatalf("failed to migrate database: %v", err)
 	}
+
+	ensureAdminUser()
+
+	hash, _ := bcrypt.GenerateFromPassword([]byte("testpass"), bcrypt.DefaultCost)
+	fmt.Println(string(hash))
 
 	r := gin.Default()
 
 	handlers.RegisterAuthRoutes(r)
-	handlers.RegisterHealthRoute(r)
 
+	// Open /api/users for dev bootstrap
+	handlers.RegisterUserRoutes(r.Group("/api/users"))
+
+	// All other /api endpoints require JWT
 	auth := r.Group("/api")
 	auth.Use(jwtutil.JWTAuthMiddleware())
-	handlers.RegisterUserRoutes(auth.Group("/users"))
 	handlers.RegisterCheckinRoutes(auth.Group("/checkins"))
 	handlers.RegisterAbsenceRoutes(auth.Group("/absences"))
 	handlers.RegisterDashboardRoutes(auth.Group("/dashboard"))

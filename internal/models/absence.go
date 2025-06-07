@@ -34,3 +34,25 @@ type AbsenceResponse struct {
 type LockAbsenceRequest struct {
 	Locked bool `json:"locked"`
 }
+
+type RegisterRequest struct {
+	Email    string `json:"email" example:"user@example.com"`
+	Password string `json:"password" example:"secret123"`
+	Name     string `json:"name" example:"John"`
+	Surname  string `json:"surname" example:"Doe"`
+	Phone    string `json:"phone" example:"+123456789"`
+}
+
+type LoginRequest struct {
+	Email    string `json:"email" example:"user@example.com"`
+	Password string `json:"password" example:"secret123"`
+}
+
+type LoginResponse struct {
+	Token   string `json:"token" example:"jwt.token.here"`
+	Email   string `json:"email" example:"user@example.com"`
+	Name    string `json:"name" example:"John"`
+	Picture string `json:"picture" example:"https://example.com/avatar.jpg"`
+	ID      uint   `json:"id" example:"1"`
+	Role    string `json:"role" example:"admin"`
+}

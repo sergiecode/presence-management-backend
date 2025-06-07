@@ -30,21 +30,21 @@ func RegisterCheckinRoutes(r *gin.RouterGroup) {
 // @Produce json
 // @Param checkin body models.CheckinRequest true "Check-in data"
 // @Success 200 {object} models.CheckinResponse
-// @Failure 400 {object} gin.H
-// @Failure 401 {object} gin.H
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
 // @Router /api/checkins [post]
 func submitCheckin(c *gin.Context) {
 	log.Println("submitCheckin called")
 
 	var req models.CheckinRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request", "details": err.Error()})
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid request", Details: err.Error()})
 		return
 	}
 	claims, ok := c.Get("user")
 	if !ok {
 		log.Println("No JWT claims found")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "Unauthorized"})
 		return
 	}
 	userClaims := claims.(jwt.MapClaims)
@@ -56,7 +56,7 @@ func submitCheckin(c *gin.Context) {
 	// Fetch user for check-in config
 	var user models.User
 	if err := db.DB.First(&user, uint(userID)).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "User not found"})
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "User not found"})
 		return
 	}
 
@@ -77,7 +77,7 @@ func submitCheckin(c *gin.Context) {
 			}
 			checkinDT, err = time.ParseInLocation("2006-01-02T15:04:05", checkinDateTimeStr, loc)
 			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid check-in time"})
+				c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid check-in time"})
 				return
 			}
 		}
@@ -106,7 +106,7 @@ func submitCheckin(c *gin.Context) {
 	// Parse threshold time for that day
 	thresholdDT, err := time.ParseInLocation("2006-01-02T15:04", dateStr+"T"+startTime, loc)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid check-in threshold config"})
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Invalid check-in threshold config"})
 		return
 	}
 
@@ -114,7 +114,7 @@ func submitCheckin(c *gin.Context) {
 	if checkinDT.After(thresholdDT) {
 		late = true
 		if req.LateReason == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Late check-in requires a reason"})
+			c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Late check-in requires a reason"})
 			return
 		}
 	}
@@ -138,7 +138,7 @@ func submitCheckin(c *gin.Context) {
 		}
 		err = db.DB.Create(&checkin).Error
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create check-in", "details": err.Error()})
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to create check-in", Details: err.Error()})
 			return
 		}
 	} else {
@@ -153,7 +153,7 @@ func submitCheckin(c *gin.Context) {
 		checkin.LateReason = req.LateReason
 		err = db.DB.Save(&checkin).Error
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update check-in", "details": err.Error()})
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to update check-in", Details: err.Error()})
 			return
 		}
 	}
@@ -179,12 +179,12 @@ func submitCheckin(c *gin.Context) {
 // @Tags checkin
 // @Produce json
 // @Success 200 {array} models.CheckinResponse
-// @Failure 401 {object} gin.H
+// @Failure 401 {object} models.ErrorResponse
 // @Router /api/checkins [get]
 func getCheckinHistory(c *gin.Context) {
 	claims, ok := c.Get("user")
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "Unauthorized"})
 		return
 	}
 	userClaims := claims.(jwt.MapClaims)
@@ -193,7 +193,7 @@ func getCheckinHistory(c *gin.Context) {
 	var checkins []models.Checkin
 	err := db.DB.Where("user_id = ?", uint(userID)).Order("date desc").Find(&checkins).Error
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch check-ins", "details": err.Error()})
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to fetch check-ins", Details: err.Error()})
 		return
 	}
 	resp := make([]models.CheckinResponse, len(checkins))
@@ -218,13 +218,13 @@ func getCheckinHistory(c *gin.Context) {
 // @Tags checkin
 // @Produce json
 // @Success 200 {object} models.CheckinResponse
-// @Failure 401 {object} gin.H
-// @Failure 404 {object} gin.H
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
 // @Router /api/checkins/today [get]
 func getTodayCheckin(c *gin.Context) {
 	claims, ok := c.Get("user")
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "Unauthorized"})
 		return
 	}
 	userClaims := claims.(jwt.MapClaims)
@@ -234,7 +234,7 @@ func getTodayCheckin(c *gin.Context) {
 	var checkin models.Checkin
 	err := db.DB.Where("user_id = ? AND date = ?", uint(userID), today).First(&checkin).Error
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "No check-in for today"})
+		c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "No check-in for today"})
 		return
 	}
 	resp := models.CheckinResponse{
@@ -255,9 +255,9 @@ func getTodayCheckin(c *gin.Context) {
 // @Description Users cannot update check-ins. Use HR endpoint.
 // @Tags checkin
 // @Router /api/checkins/{id} [put]
-// @Failure 405 {object} gin.H
+// @Failure 405 {object} models.ErrorResponse
 func updateCheckin(c *gin.Context) {
-	c.JSON(405, gin.H{"error": "Updating check-ins is not allowed. Contact HR."})
+	c.JSON(405, models.ErrorResponse{Error: "Updating check-ins is not allowed. Contact HR."})
 }
 
 // @Summary List all check-ins (HR/admin)
@@ -269,19 +269,19 @@ func updateCheckin(c *gin.Context) {
 // @Param user_id query int false "Filter by user ID"
 // @Param date query string false "Filter by date (YYYY-MM-DD)"
 // @Success 200 {object} []models.CheckinResponse
-// @Failure 401 {object} gin.H
-// @Failure 403 {object} gin.H
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
 // @Router /api/checkins/all [get]
 func listAllCheckins(c *gin.Context) {
 	claims, ok := c.Get("user")
 	if !ok {
-		c.JSON(401, gin.H{"error": "Unauthorized"})
+		c.JSON(401, models.ErrorResponse{Error: "Unauthorized"})
 		return
 	}
 	userClaims := claims.(jwt.MapClaims)
 	role, _ := userClaims["role"].(string)
 	if role != "hr" && role != "admin" {
-		c.JSON(403, gin.H{"error": "Forbidden: HR or admin only"})
+		c.JSON(403, models.ErrorResponse{Error: "Forbidden: HR or admin only"})
 		return
 	}
 	page := 1
@@ -333,32 +333,32 @@ func listAllCheckins(c *gin.Context) {
 // @Tags checkin
 // @Produce json
 // @Param id path int true "Check-in ID"
-// @Success 200 {object} gin.H
-// @Failure 401 {object} gin.H
-// @Failure 403 {object} gin.H
-// @Failure 404 {object} gin.H
+// @Success 200 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
 // @Router /api/checkins/{id} [delete]
 func deleteCheckin(c *gin.Context) {
 	claims, ok := c.Get("user")
 	if !ok {
-		c.JSON(401, gin.H{"error": "Unauthorized"})
+		c.JSON(401, models.ErrorResponse{Error: "Unauthorized"})
 		return
 	}
 	userClaims := claims.(jwt.MapClaims)
 	role, _ := userClaims["role"].(string)
 	if role != "hr" && role != "admin" {
-		c.JSON(403, gin.H{"error": "Forbidden: HR or admin only"})
+		c.JSON(403, models.ErrorResponse{Error: "Forbidden: HR or admin only"})
 		return
 	}
 	id := c.Param("id")
 	var checkin models.Checkin
 	if err := db.DB.First(&checkin, id).Error; err != nil || checkin.Deleted {
-		c.JSON(404, gin.H{"error": "Check-in not found"})
+		c.JSON(404, models.ErrorResponse{Error: "Check-in not found"})
 		return
 	}
 	checkin.Deleted = true
 	if err := db.DB.Save(&checkin).Error; err != nil {
-		c.JSON(500, gin.H{"error": "Failed to delete check-in", "details": err.Error()})
+		c.JSON(500, models.ErrorResponse{Error: "Failed to delete check-in", Details: err.Error()})
 		return
 	}
 	c.JSON(200, gin.H{"message": "Check-in deleted"})

@@ -29,24 +29,24 @@ func RegisterAbsenceRoutes(r *gin.RouterGroup) {
 // @Produce json
 // @Param absence body models.AbsenceRequest true "Absence data"
 // @Success 200 {object} models.AbsenceResponse
-// @Failure 400 {object} gin.H
-// @Failure 401 {object} gin.H
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
 // @Router /api/absences [post]
 func reportAbsence(c *gin.Context) {
 	var req models.AbsenceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request", "details": err.Error()})
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid request", Details: err.Error()})
 		return
 	}
 	claims, ok := c.Get("user")
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "Unauthorized"})
 		return
 	}
 	userClaims := claims.(map[string]interface{})
 	userID, ok := userClaims["user_id"].(float64)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "Invalid token"})
 		return
 	}
 	absence := models.Absence{
@@ -56,7 +56,7 @@ func reportAbsence(c *gin.Context) {
 		Reason: req.Reason,
 	}
 	if err := db.DB.Create(&absence).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create absence", "details": err.Error()})
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to create absence", Details: err.Error()})
 		return
 	}
 	resp := models.AbsenceResponse{
@@ -76,24 +76,24 @@ func reportAbsence(c *gin.Context) {
 // @Tags absence
 // @Produce json
 // @Success 200 {array} models.AbsenceResponse
-// @Failure 401 {object} gin.H
+// @Failure 401 {object} models.ErrorResponse
 // @Router /api/absences [get]
 func getAbsenceHistory(c *gin.Context) {
 	claims, ok := c.Get("user")
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "Unauthorized"})
 		return
 	}
 	userClaims := claims.(map[string]interface{})
 	userID, ok := userClaims["user_id"].(float64)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "Invalid token"})
 		return
 	}
 	var absences []models.Absence
 	err := db.DB.Where("user_id = ?", uint(userID)).Order("date desc").Find(&absences).Error
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch absences", "details": err.Error()})
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to fetch absences", Details: err.Error()})
 		return
 	}
 	resp := make([]models.AbsenceResponse, len(absences))
@@ -119,15 +119,15 @@ func getAbsenceHistory(c *gin.Context) {
 // @Param id path int true "Absence ID"
 // @Param absence body models.AbsenceRequest true "Absence data"
 // @Success 200 {object} models.AbsenceResponse
-// @Failure 400 {object} gin.H
-// @Failure 401 {object} gin.H
-// @Failure 403 {object} gin.H
-// @Failure 404 {object} gin.H
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
 // @Router /api/absences/{id} [put]
 func updateAbsence(c *gin.Context) {
 	claims, ok := c.Get("user")
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "Unauthorized"})
 		return
 	}
 	userClaims := claims.(map[string]interface{})
@@ -136,27 +136,27 @@ func updateAbsence(c *gin.Context) {
 	id := c.Param("id")
 	var absence models.Absence
 	if err := db.DB.First(&absence, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Absence not found"})
+		c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "Absence not found"})
 		return
 	}
 	if role != "hr" && role != "admin" && absence.UserID != uint(userID) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: can only update your own absence"})
+		c.JSON(http.StatusForbidden, models.ErrorResponse{Error: "Forbidden: can only update your own absence"})
 		return
 	}
 	if absence.Locked && role != "hr" && role != "admin" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Absence is locked by HR"})
+		c.JSON(http.StatusForbidden, models.ErrorResponse{Error: "Absence is locked by HR"})
 		return
 	}
 	var req models.AbsenceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request", "details": err.Error()})
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid request", Details: err.Error()})
 		return
 	}
 	absence.Date = req.Date
 	absence.Type = req.Type
 	absence.Reason = req.Reason
 	if err := db.DB.Save(&absence).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update absence", "details": err.Error()})
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to update absence", Details: err.Error()})
 		return
 	}
 	resp := models.AbsenceResponse{
@@ -179,15 +179,15 @@ func updateAbsence(c *gin.Context) {
 // @Param id path int true "Absence ID"
 // @Param file formData file true "Medical certificate file"
 // @Success 200 {object} models.AbsenceResponse
-// @Failure 400 {object} gin.H
-// @Failure 401 {object} gin.H
-// @Failure 403 {object} gin.H
-// @Failure 404 {object} gin.H
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
 // @Router /api/absences/{id}/documents [post]
 func uploadAbsenceDocument(c *gin.Context) {
 	claims, ok := c.Get("user")
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "Unauthorized"})
 		return
 	}
 	userClaims := claims.(map[string]interface{})
@@ -196,39 +196,39 @@ func uploadAbsenceDocument(c *gin.Context) {
 	id := c.Param("id")
 	var absence models.Absence
 	if err := db.DB.First(&absence, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Absence not found"})
+		c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "Absence not found"})
 		return
 	}
 	if role != "hr" && role != "admin" && absence.UserID != uint(userID) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: can only upload for your own absence"})
+		c.JSON(http.StatusForbidden, models.ErrorResponse{Error: "Forbidden: can only upload for your own absence"})
 		return
 	}
 	if absence.Locked && role != "hr" && role != "admin" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Absence is locked by HR"})
+		c.JSON(http.StatusForbidden, models.ErrorResponse{Error: "Absence is locked by HR"})
 		return
 	}
 	file, err := c.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "File required"})
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "File required"})
 		return
 	}
 	if file.Size > 5*1024*1024 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "File too large (max 5MB)"})
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "File too large (max 5MB)"})
 		return
 	}
 	ext := file.Filename[len(file.Filename)-4:]
 	if ext != ".pdf" && ext != ".jpg" && ext != ".png" && ext != "jpeg" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Only PDF, JPG, PNG allowed"})
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Only PDF, JPG, PNG allowed"})
 		return
 	}
 	path := "uploads/absence_" + id + "_" + file.Filename
 	if err := c.SaveUploadedFile(file, path); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file", "details": err.Error()})
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to save file", Details: err.Error()})
 		return
 	}
 	absence.FileURL = "/" + path
 	if err := db.DB.Save(&absence).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update absence with file", "details": err.Error()})
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to update absence with file", Details: err.Error()})
 		return
 	}
 	resp := models.AbsenceResponse{
@@ -255,37 +255,37 @@ func getAbsenceDocuments(c *gin.Context) {
 // @Param id path int true "Absence ID"
 // @Param lock body models.LockAbsenceRequest true "Lock state"
 // @Success 200 {object} models.AbsenceResponse
-// @Failure 400 {object} gin.H
-// @Failure 401 {object} gin.H
-// @Failure 403 {object} gin.H
-// @Failure 404 {object} gin.H
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
 // @Router /api/absences/{id}/lock [patch]
 func lockAbsence(c *gin.Context) {
 	claims, ok := c.Get("user")
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "Unauthorized"})
 		return
 	}
 	userClaims := claims.(map[string]interface{})
 	role, _ := userClaims["role"].(string)
 	if role != "hr" && role != "admin" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: HR or admin only"})
+		c.JSON(http.StatusForbidden, models.ErrorResponse{Error: "Forbidden: HR or admin only"})
 		return
 	}
 	id := c.Param("id")
 	var absence models.Absence
 	if err := db.DB.First(&absence, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Absence not found"})
+		c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "Absence not found"})
 		return
 	}
 	var req models.LockAbsenceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request", "details": err.Error()})
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid request", Details: err.Error()})
 		return
 	}
 	absence.Locked = req.Locked
 	if err := db.DB.Save(&absence).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update lock state", "details": err.Error()})
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to update lock state", Details: err.Error()})
 		return
 	}
 	resp := models.AbsenceResponse{
@@ -310,19 +310,19 @@ func lockAbsence(c *gin.Context) {
 // @Param date query string false "Filter by date (YYYY-MM-DD)"
 // @Param type query string false "Filter by type (absence/late/medical)"
 // @Success 200 {object} []models.AbsenceResponse
-// @Failure 401 {object} gin.H
-// @Failure 403 {object} gin.H
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
 // @Router /api/absences/all [get]
 func listAllAbsences(c *gin.Context) {
 	claims, ok := c.Get("user")
 	if !ok {
-		c.JSON(401, gin.H{"error": "Unauthorized"})
+		c.JSON(401, models.ErrorResponse{Error: "Unauthorized"})
 		return
 	}
 	userClaims := claims.(map[string]interface{})
 	role, _ := userClaims["role"].(string)
 	if role != "hr" && role != "admin" {
-		c.JSON(403, gin.H{"error": "Forbidden: HR or admin only"})
+		c.JSON(403, models.ErrorResponse{Error: "Forbidden: HR or admin only"})
 		return
 	}
 	page := 1
@@ -373,31 +373,31 @@ func listAllAbsences(c *gin.Context) {
 // @Produce json
 // @Param id path int true "Absence ID"
 // @Success 200 {object} gin.H
-// @Failure 401 {object} gin.H
-// @Failure 403 {object} gin.H
-// @Failure 404 {object} gin.H
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
 // @Router /api/absences/{id} [delete]
 func deleteAbsence(c *gin.Context) {
 	claims, ok := c.Get("user")
 	if !ok {
-		c.JSON(401, gin.H{"error": "Unauthorized"})
+		c.JSON(401, models.ErrorResponse{Error: "Unauthorized"})
 		return
 	}
 	userClaims := claims.(map[string]interface{})
 	role, _ := userClaims["role"].(string)
 	if role != "hr" && role != "admin" {
-		c.JSON(403, gin.H{"error": "Forbidden: HR or admin only"})
+		c.JSON(403, models.ErrorResponse{Error: "Forbidden: HR or admin only"})
 		return
 	}
 	id := c.Param("id")
 	var absence models.Absence
 	if err := db.DB.First(&absence, id).Error; err != nil || absence.Deleted {
-		c.JSON(404, gin.H{"error": "Absence not found"})
+		c.JSON(404, models.ErrorResponse{Error: "Absence not found"})
 		return
 	}
 	absence.Deleted = true
 	if err := db.DB.Save(&absence).Error; err != nil {
-		c.JSON(500, gin.H{"error": "Failed to delete absence", "details": err.Error()})
+		c.JSON(500, models.ErrorResponse{Error: "Failed to delete absence", Details: err.Error()})
 		return
 	}
 	c.JSON(200, gin.H{"message": "Absence deleted"})

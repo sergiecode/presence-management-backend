@@ -139,10 +139,67 @@ definitions:
       user_id:
         type: integer
     type: object
+  models.ErrorResponse:
+    properties:
+      details:
+        example: Email is required
+        type: string
+      error:
+        example: Invalid request
+        type: string
+    type: object
   models.LockAbsenceRequest:
     properties:
       locked:
         type: boolean
+    type: object
+  models.LoginRequest:
+    properties:
+      email:
+        example: user@example.com
+        type: string
+      password:
+        example: secret123
+        type: string
+    type: object
+  models.LoginResponse:
+    properties:
+      email:
+        example: user@example.com
+        type: string
+      id:
+        example: 1
+        type: integer
+      name:
+        example: John
+        type: string
+      picture:
+        example: https://example.com/avatar.jpg
+        type: string
+      role:
+        example: admin
+        type: string
+      token:
+        example: jwt.token.here
+        type: string
+    type: object
+  models.RegisterRequest:
+    properties:
+      email:
+        example: user@example.com
+        type: string
+      name:
+        example: John
+        type: string
+      password:
+        example: secret123
+        type: string
+      phone:
+        example: "+123456789"
+        type: string
+      surname:
+        example: Doe
+        type: string
     type: object
   models.User:
     properties:
@@ -157,6 +214,8 @@ definitions:
           UpdatedAt time.Time // add manually if you want it in docs
           DeletedAt gorm.DeletedAt `gorm:"index"` // add manually if you want it in docs
         type: string
+      email_confirmed:
+        type: boolean
       id:
         type: integer
       name:
@@ -166,9 +225,13 @@ definitions:
         type: integer
       pending_approval:
         type: boolean
+      phone:
+        type: string
       picture:
         type: string
       role:
+        type: string
+      surname:
         type: string
       timezone:
         type: string
@@ -192,7 +255,7 @@ paths:
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
       summary: Get user's absence history
       tags:
       - absence
@@ -217,11 +280,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
       summary: Report absence/late/medical
       tags:
       - absence
@@ -244,15 +307,15 @@ paths:
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
       summary: Soft delete absence (HR/admin)
       tags:
       - absence
@@ -283,19 +346,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
       summary: Update absence/late/medical
       tags:
       - absence
@@ -326,19 +389,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
       summary: Upload medical certificate
       tags:
       - absence
@@ -370,19 +433,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
       summary: Lock or unlock an absence
       tags:
       - absence
@@ -423,11 +486,11 @@ paths:
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
       summary: List all absences (HR/admin)
       tags:
       - absence
@@ -447,7 +510,7 @@ paths:
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
       summary: Get user's check-in history
       tags:
       - checkin
@@ -473,11 +536,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
       summary: Submit daily check-in
       tags:
       - checkin
@@ -496,19 +559,19 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
       summary: Soft delete check-in (HR/admin)
       tags:
       - checkin
@@ -518,7 +581,7 @@ paths:
         "405":
           description: Method Not Allowed
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
       summary: Not allowed
       tags:
       - checkin
@@ -555,11 +618,11 @@ paths:
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
       summary: List all check-ins (HR/admin)
       tags:
       - checkin
@@ -577,11 +640,11 @@ paths:
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
       summary: Get today's check-in
       tags:
       - checkin
@@ -609,11 +672,11 @@ paths:
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
       summary: Get absence statistics
       tags:
       - dashboard
@@ -641,11 +704,11 @@ paths:
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
       summary: Get attendance statistics
       tags:
       - dashboard
@@ -672,15 +735,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
       summary: Get attendance roll call
       tags:
       - dashboard
@@ -727,11 +790,11 @@ paths:
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
       summary: Get audit logs
       tags:
       - dashboard
@@ -763,19 +826,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
       summary: HR/admin update check-in
       tags:
       - dashboard
@@ -806,11 +869,11 @@ paths:
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
       summary: Export check-ins to Excel
       tags:
       - dashboard
@@ -828,11 +891,11 @@ paths:
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/gin.H'
+            $ref: '#/definitions/models.ErrorResponse'
       summary: Get user statistics
       tags:
       - dashboard
@@ -1098,6 +1161,77 @@ paths:
       summary: Get current user's profile
       tags:
       - users
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Authenticate with email and password. Returns JWT on success.
+      parameters:
+      - description: Login credentials
+        in: body
+        name: credentials
+        required: true
+        schema:
+          $ref: '#/definitions/models.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.LoginResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: Login
+      tags:
+      - auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Register with name, surname, email, phone, and password. Sends
+        confirmation email.
+      parameters:
+      - description: Registration data
+        in: body
+        name: registration
+        required: true
+        schema:
+          $ref: '#/definitions/models.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: Register a new user
+      tags:
+      - auth
   /healthz:
     get:
       description: Check if the server is running
