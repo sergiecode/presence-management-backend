@@ -13,6 +13,7 @@ import (
 
 	_ "BE-ABSTI-CLOCKIN/docs"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	swaggerFiles "github.com/swaggo/files"
@@ -74,6 +75,8 @@ func main() {
 	fmt.Println(string(hash))
 
 	r := gin.Default()
+
+	r.Use(cors.Default())
 
 	handlers.RegisterAuthRoutes(r)
 
