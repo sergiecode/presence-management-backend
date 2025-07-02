@@ -4,10 +4,12 @@ import (
 	"fmt"
 
 	"BE-ABSTI-CLOCKIN/internal/db"
+	"BE-ABSTI-CLOCKIN/internal/logger"
 	"BE-ABSTI-CLOCKIN/internal/models"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"go.uber.org/zap"
 )
 
 func RegisterUserRoutes(r *gin.RouterGroup) {
@@ -43,6 +45,12 @@ func getMe(c *gin.Context) {
 	}
 	var user models.User
 	if err := db.DB.Where("email = ?", email).First(&user).Error; err != nil {
+		logger.Log.Error("User not found",
+			zap.String("endpoint", c.FullPath()),
+			zap.String("method", c.Request.Method),
+			zap.String("user", email),
+			zap.Error(err),
+		)
 		c.JSON(404, gin.H{"error": "User not found"})
 		return
 	}
@@ -115,6 +123,12 @@ func getUserByID(c *gin.Context) {
 	id := c.Param("id")
 	var user models.User
 	if err := db.DB.First(&user, id).Error; err != nil || user.Deactivated {
+		logger.Log.Error("User not found or deactivated",
+			zap.String("endpoint", c.FullPath()),
+			zap.String("method", c.Request.Method),
+			zap.String("user", getUserEmail(c)),
+			zap.Error(err),
+		)
 		c.JSON(404, gin.H{"error": "User not found"})
 		return
 	}
@@ -179,6 +193,13 @@ func updateUser(c *gin.Context) {
 		user.NotificationOffsetMin = req.NotificationOffsetMin
 	}
 	if err := db.DB.Save(&user).Error; err != nil {
+		logger.Log.Error("Failed to update user",
+			zap.String("endpoint", c.FullPath()),
+			zap.String("method", c.Request.Method),
+			zap.String("user", getUserEmail(c)),
+			zap.Any("payload", req),
+			zap.Error(err),
+		)
 		c.JSON(500, gin.H{"error": "Failed to update user", "details": err.Error()})
 		return
 	}

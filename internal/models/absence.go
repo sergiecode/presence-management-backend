@@ -56,3 +56,32 @@ type LoginResponse struct {
 	ID      uint   `json:"id" example:"1"`
 	Role    string `json:"role" example:"admin"`
 }
+
+type RefreshRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
+// For /auth/forgot
+// { "email": "user@example.com" }
+type ForgotRequest struct {
+	Email string `json:"email"`
+}
+
+// For /auth/reset
+// { "token": "...", "new_password": "..." }
+type ResetRequest struct {
+	Token       string `json:"token"`
+	NewPassword string `json:"new_password"`
+}
+
+// For /auth/resend-confirmation
+// { "email": "user@example.com" }
+type ResendConfirmationRequest struct {
+	Email string `json:"email"`
+}
+
+// For /auth/logout
+// { "refresh_token": "..." }
+type LogoutRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}

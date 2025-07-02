@@ -307,7 +307,7 @@ func resetHandler(c *gin.Context) {
 // @Tags auth
 // @Accept json
 // @Produce json
-// @Param refresh body struct{RefreshToken string `json:"refresh_token"`} true "Refresh token"
+// @Param refresh body models.RefreshRequest true "Refresh token request"
 // @Success 200 {object} map[string]string
 // @Failure 401 {object} models.ErrorResponse
 // @Router /auth/refresh [post]
@@ -355,7 +355,7 @@ func refreshHandler(c *gin.Context) {
 // @Tags auth
 // @Accept json
 // @Produce json
-// @Param logout body struct{RefreshToken string `json:"refresh_token"`} true "Refresh token"
+// @Param logout body models.LogoutRequest true "Logout request"
 // @Success 200 {object} map[string]string
 // @Failure 401 {object} models.ErrorResponse
 // @Router /auth/logout [post]
@@ -377,7 +377,7 @@ func logoutHandler(c *gin.Context) {
 // @Tags auth
 // @Accept json
 // @Produce json
-// @Param email body struct{Email string `json:"email"`} true "User email"
+// @Param resend body models.ResendConfirmationRequest true "Resend confirmation request"
 // @Success 200 {object} map[string]string
 // @Router /auth/resend-confirmation [post]
 func resendConfirmationHandler(c *gin.Context) {

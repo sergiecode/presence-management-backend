@@ -7,10 +7,10 @@ const docTemplate = `{
     "schemes": {{ marshal .Schemes }},
     "swagger": "2.0",
     "info": {
-        "description": "{{escape .Description}}",
-        "title": "{{.Title}}",
+        "description": "{{escape .Description }}",
+        "title": "{{Absence Tracker API Documentation}}",
         "contact": {},
-        "version": "{{.Version}}"
+        "version": "{{1.0.0}}"
     },
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
@@ -527,6 +527,117 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/checkins/checkout": {
+            "post": {
+                "description": "User submits daily checkout (end-of-day). Only one per day. JWT required. Must have checked in first. Records checkout time, status, and overtime.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "checkin"
+                ],
+                "summary": "Submit daily checkout",
+                "parameters": [
+                    {
+                        "description": "Checkout data",
+                        "name": "checkout",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.CheckoutRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.CheckinResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/checkins/checkout/{id}": {
+            "put": {
+                "description": "HR or admin can update any user's checkout info (time, status, overtime). JWT with hr/admin role required.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "checkin"
+                ],
+                "summary": "Admin/HR update checkout",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Check-in ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Checkout update data",
+                        "name": "checkout",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.CheckoutUpdateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.CheckinResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/checkins/today": {
             "get": {
                 "description": "Returns today's check-in for the authenticated user, or 404 if none. JWT required.",
@@ -894,6 +1005,57 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/dashboard/checkins/view": {
+            "get": {
+                "description": "Returns all checkins for a given date from daily_checkins_view. HR/admin only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboard"
+                ],
+                "summary": "Get all checkins for a date (view)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Date (YYYY-MM-DD)",
+                        "name": "date",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": true
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/dashboard/checkins/{id}": {
             "put": {
                 "description": "HR or admin can update any user's check-in. Audit log is written. JWT with hr/admin role required.",
@@ -930,6 +1092,59 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/models.CheckinResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/dashboard/daily-summary": {
+            "get": {
+                "description": "Returns the daily_summary row for a given date. HR/admin only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboard"
+                ],
+                "summary": "Get daily summary",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Date (YYYY-MM-DD)",
+                        "name": "date",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.DailySummary"
                         }
                     },
                     "400": {
@@ -1024,56 +1239,6 @@ const docTemplate = `{
                             "items": {
                                 "$ref": "#/definitions/models.User"
                             }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/gin.H"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/gin.H"
-                        }
-                    }
-                }
-            },
-            "post": {
-                "description": "Admin only. Create a new user. Email must be unique.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "users"
-                ],
-                "summary": "Create user",
-                "parameters": [
-                    {
-                        "description": "User data",
-                        "name": "user",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/models.User"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "$ref": "#/definitions/models.User"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/gin.H"
                         }
                     },
                     "401": {
@@ -1442,6 +1607,92 @@ const docTemplate = `{
                 }
             }
         },
+        "/auth/logout": {
+            "post": {
+                "description": "Revoke a refresh token (logout from device/session)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Logout (revoke refresh token)",
+                "parameters": [
+                    {
+                        "description": "Logout request",
+                        "name": "logout",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.LogoutRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/refresh": {
+            "post": {
+                "description": "Exchange a valid refresh token for a new access token. Rotates refresh token.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Refresh JWT access token",
+                "parameters": [
+                    {
+                        "description": "Refresh token request",
+                        "name": "refresh",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.RefreshRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/register": {
             "post": {
                 "description": "Register with name, surname, email, phone, and password. Sends confirmation email.",
@@ -1486,6 +1737,43 @@ const docTemplate = `{
                         "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/resend-confirmation": {
+            "post": {
+                "description": "Resend the email confirmation link to a user who hasn't confirmed yet.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Resend confirmation email",
+                "parameters": [
+                    {
+                        "description": "Resend confirmation request",
+                        "name": "resend",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.ResendConfirmationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     }
                 }
@@ -1682,6 +1970,12 @@ const docTemplate = `{
         "models.CheckinResponse": {
             "type": "object",
             "properties": {
+                "checkout_status": {
+                    "type": "string"
+                },
+                "checkout_time": {
+                    "type": "string"
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -1712,12 +2006,66 @@ const docTemplate = `{
                 "notes": {
                     "type": "string"
                 },
+                "overtime": {
+                    "type": "boolean"
+                },
                 "time": {
                     "description": "return as RFC3339 string for API clients",
                     "type": "string"
                 },
                 "user_id": {
                     "type": "integer"
+                }
+            }
+        },
+        "models.CheckoutRequest": {
+            "type": "object",
+            "properties": {
+                "overtime": {
+                    "type": "boolean"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.CheckoutUpdateRequest": {
+            "type": "object",
+            "properties": {
+                "checkout_status": {
+                    "type": "string"
+                },
+                "checkout_time": {
+                    "type": "string"
+                },
+                "overtime": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "models.DailySummary": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "date": {
+                    "type": "string"
+                },
+                "total_checkins": {
+                    "type": "integer"
+                },
+                "total_late": {
+                    "type": "integer"
+                },
+                "total_on_time": {
+                    "type": "integer"
+                },
+                "total_overtime": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
                 }
             }
         },
@@ -1784,6 +2132,22 @@ const docTemplate = `{
                 }
             }
         },
+        "models.LogoutRequest": {
+            "type": "object",
+            "properties": {
+                "refresh_token": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.RefreshRequest": {
+            "type": "object",
+            "properties": {
+                "refresh_token": {
+                    "type": "string"
+                }
+            }
+        },
         "models.RegisterRequest": {
             "type": "object",
             "properties": {
@@ -1806,6 +2170,14 @@ const docTemplate = `{
                 "surname": {
                     "type": "string",
                     "example": "Doe"
+                }
+            }
+        },
+        "models.ResendConfirmationRequest": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
                 }
             }
         },

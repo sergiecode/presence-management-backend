@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"BE-ABSTI-CLOCKIN/internal/db"
 	"BE-ABSTI-CLOCKIN/internal/models"
@@ -12,6 +13,10 @@ import (
 	"BE-ABSTI-CLOCKIN/pkg/jwtutil"
 
 	_ "BE-ABSTI-CLOCKIN/docs"
+
+	"flag"
+
+	"BE-ABSTI-CLOCKIN/internal/logger"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -56,6 +61,27 @@ func ensureAdminUser() {
 }
 
 func main() {
+	if err := logger.Init(); err != nil {
+		log.Fatalf("failed to init zap logger: %v", err)
+	}
+	defer logger.Log.Sync()
+
+	// CLI flag for summary aggregation
+	var summaryDate string
+	flag.StringVar(&summaryDate, "summary-date", "", "Aggregate daily summary for this date (YYYY-MM-DD) and exit")
+	flag.Parse()
+
+	if summaryDate != "" {
+		if err := db.Connect(); err != nil {
+			log.Fatalf("failed to connect to database: %v", err)
+		}
+		if err := db.UpdateDailySummary(summaryDate); err != nil {
+			log.Fatalf("failed to update daily summary for %s: %v", summaryDate, err)
+		}
+		fmt.Printf("Daily summary for %s updated successfully\n", summaryDate)
+		return
+	}
+
 	err := godotenv.Load()
 	if err != nil {
 		log.Println("No .env file found or error loading .env")
@@ -68,6 +94,9 @@ func main() {
 	if err := db.DB.AutoMigrate(&models.User{}, &models.Checkin{}, &models.Absence{}, &models.AuditLog{}, &models.RefreshToken{}); err != nil {
 		log.Fatalf("failed to migrate database: %v", err)
 	}
+	// Add compound index for (user_id, date) if not exists
+	db.DB.Exec("CREATE INDEX IF NOT EXISTS idx_checkins_user_date ON checkins (user_id, date);")
+	// TODO: Add migration for daily_checkins_view and daily_summary table
 
 	ensureAdminUser()
 
@@ -76,7 +105,15 @@ func main() {
 
 	r := gin.Default()
 
-	r.Use(cors.Default())
+	// CORS middleware - must be before routes
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:8081"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
+	}))
 
 	handlers.RegisterAuthRoutes(r)
 

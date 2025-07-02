@@ -7,20 +7,24 @@ import "time"
 // UserID is a foreign key to User
 // Date is stored as YYYY-MM-DD string for simplicity (could use time.Time if you want)
 type Checkin struct {
-	ID             uint      `json:"id" gorm:"primaryKey"`
-	UserID         uint      `json:"user_id" gorm:"index"`
-	Date           string    `json:"date" gorm:"type:date;index"`               // YYYY-MM-DD
-	Time           time.Time `json:"time" gorm:"type:timestamp with time zone"` // precise check-in time
-	LocationType   string    `json:"location_type"`
-	LocationDetail string    `json:"location_detail,omitempty"`
-	GPSLat         float64   `json:"gps_lat,omitempty"`
-	GPSLong        float64   `json:"gps_long,omitempty"`
-	Notes          string    `json:"notes,omitempty"`
-	Late           bool      `json:"late"`
-	LateReason     string    `json:"late_reason,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
-	Deleted        bool      `json:"deleted" gorm:"default:false"`
+	ID             uint       `json:"id" gorm:"primaryKey"`
+	UserID         uint       `json:"user_id" gorm:"index"`
+	Date           string     `json:"date" gorm:"type:date;index"`               // YYYY-MM-DD
+	Time           time.Time  `json:"time" gorm:"type:timestamp with time zone"` // precise check-in time
+	LocationType   string     `json:"location_type"`
+	LocationDetail string     `json:"location_detail,omitempty"`
+	GPSLat         float64    `json:"gps_lat,omitempty"`
+	GPSLong        float64    `json:"gps_long,omitempty"`
+	Notes          string     `json:"notes,omitempty"`
+	Late           bool       `json:"late"`
+	LateReason     string     `json:"late_reason,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+	Deleted        bool       `json:"deleted" gorm:"default:false"`
+	CheckoutTime   *time.Time `json:"checkout_time,omitempty" gorm:"type:timestamp with time zone"`
+	CheckoutStatus string     `json:"checkout_status,omitempty" gorm:"type:varchar(32);default:''"`
+	Overtime       bool       `json:"overtime" gorm:"default:false"`
+	AbsenceID      *uint      `json:"absence_id,omitempty" gorm:"index"`
 }
 
 // NOTE: You must run a DB migration to convert the column type if you have existing data.
@@ -33,6 +37,7 @@ type Checkin struct {
 // LateReason is optional, only required if late
 // Time is optional, backend will set if not provided
 type CheckinRequest struct {
+	UserID         uint    `json:"user_id"`
 	Date           string  `json:"date" binding:"required,datetime=2006-01-02"`
 	Time           string  `json:"time,omitempty"` // still accept string for backward compatibility
 	LocationType   string  `json:"location_type" binding:"required,oneof=home office client temporary"`
@@ -59,6 +64,10 @@ type CheckinResponse struct {
 	Late           bool    `json:"late"`
 	LateReason     string  `json:"late_reason,omitempty"`
 	CreatedAt      string  `json:"created_at"`
+	CheckoutTime   *string `json:"checkout_time,omitempty"`
+	CheckoutStatus string  `json:"checkout_status,omitempty"`
+	Overtime       bool    `json:"overtime,omitempty"`
+	AbsenceID      *uint   `json:"absence_id,omitempty"`
 }
 
 // CheckinConfigRequest is what the mobile app sends
@@ -69,4 +78,43 @@ type CheckinConfigRequest struct {
 	CheckinStartTime      string `json:"checkin_start_time"`
 	Timezone              string `json:"timezone"`
 	NotificationOffsetMin int    `json:"notification_offset_min"`
+}
+
+// DailySummary matches the daily_summary table for reporting/aggregation
+// Used for fast dashboard stats and analytics
+type DailySummary struct {
+	Date          string    `json:"date" gorm:"primaryKey"`
+	TotalCheckins int       `json:"total_checkins"`
+	TotalOnTime   int       `json:"total_on_time"`
+	TotalLate     int       `json:"total_late"`
+	TotalOvertime int       `json:"total_overtime"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+func (Checkin) TableName() string {
+	return "checkins"
+}
+
+// Add GORM index for (user_id, date)
+// In migration: db.Model(&Checkin{}).AddIndex("idx_user_date", "user_id", "date")
+
+// For /checkins/checkout (user checkout)
+type CheckoutRequest struct {
+	Status   string `json:"status"`
+	Overtime bool   `json:"overtime"`
+}
+
+// For /checkins/checkout/:id (HR/admin update)
+type CheckoutUpdateRequest struct {
+	CheckoutTime   string `json:"checkout_time"`
+	CheckoutStatus string `json:"checkout_status"`
+	Overtime       bool   `json:"overtime"`
+}
+
+type MonthlyStat struct {
+	Month    string `json:"month"`
+	Total    int64  `json:"total"`
+	Late     int64  `json:"late"`
+	Overtime int64  `json:"overtime"`
 }

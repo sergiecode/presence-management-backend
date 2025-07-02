@@ -7,11 +7,13 @@ import (
 	"time"
 
 	"BE-ABSTI-CLOCKIN/internal/db"
+	"BE-ABSTI-CLOCKIN/internal/logger"
 	"BE-ABSTI-CLOCKIN/internal/models"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/xuri/excelize/v2"
+	"go.uber.org/zap"
 )
 
 func RegisterDashboardRoutes(r *gin.RouterGroup) {
@@ -22,6 +24,14 @@ func RegisterDashboardRoutes(r *gin.RouterGroup) {
 	r.GET("/audit-logs", getAuditLogs)
 	r.GET("/checkins/export", exportCheckinsToExcel)
 	r.GET("/attendance/getAll", getAttendance)
+	r.GET("/daily-summary", getDailySummary)
+	r.GET("/checkins/view", getCheckinsView)
+	r.GET("/attendance/individual", getIndividualAttendance)
+	r.POST("/checkins", createOrReplaceCheckinForHR)
+	r.GET("/analytics/monthly", getMonthlyAnalytics)
+	r.GET("/analytics/heatmap", getAbsenceHeatmap)
+	r.GET("/analytics/overtime", getOvertimeStats)
+	r.GET("/analytics/prediction", getLateCheckinPrediction)
 }
 
 // @Summary Get attendance statistics
@@ -180,6 +190,13 @@ func updateCheckinForHR(c *gin.Context) {
 	checkin.GPSLong = req.GPSLong
 	checkin.Notes = req.Notes
 	if err := db.DB.Save(&checkin).Error; err != nil {
+		logger.Log.Error("Failed to update check-in (dashboard)",
+			zap.String("endpoint", c.FullPath()),
+			zap.String("method", c.Request.Method),
+			zap.String("user", userClaims["email"].(string)),
+			zap.Any("payload", req),
+			zap.Error(err),
+		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update check-in", "details": err.Error()})
 		return
 	}
@@ -409,6 +426,10 @@ func getAttendance(c *gin.Context) {
 		AbsenceReason    *string
 		FileURL          *string
 		AbsenceCreatedAt *time.Time
+		// New fields
+		CheckoutTime   *time.Time
+		CheckoutStatus *string
+		Overtime       *bool
 	}
 
 	var rows []attendanceRow
@@ -431,7 +452,10 @@ func getAttendance(c *gin.Context) {
 	a.type AS absence_type,
 	a.reason AS absence_reason,
 	a.file_url,
-	a.created_at AS absence_created_at
+	a.created_at AS absence_created_at,
+	c.checkout_time,
+	c.checkout_status,
+	c.overtime
 	FROM users u
 	LEFT JOIN checkins c ON c.user_id = u.id AND c.date = ? AND c.deleted = false
 	LEFT JOIN absences a ON a.user_id = u.id AND a.date = ? AND a.deleted = false
@@ -504,11 +528,17 @@ func getAttendance(c *gin.Context) {
 			"location_detail": "",
 			"absence_type":    "",
 			"absence_reason":  "",
+			"checkout_time":   "",
+			"checkout_status": "",
+			"overtime":        false,
 		}
 		if checkin != nil {
 			tableRow["checkin_time"] = checkin.Time
 			tableRow["location_type"] = checkin.LocationType
 			tableRow["location_detail"] = checkin.LocationDetail
+			tableRow["checkout_time"] = checkin.CheckoutTime
+			tableRow["checkout_status"] = checkin.CheckoutStatus
+			tableRow["overtime"] = checkin.Overtime
 		}
 		if absence != nil {
 			tableRow["absence_type"] = absence.Type
@@ -537,4 +567,381 @@ func derefBool(b *bool) bool {
 		return *b
 	}
 	return false
+}
+
+// @Summary Get daily summary
+// @Description Returns the daily_summary row for a given date. HR/admin only.
+// @Tags dashboard
+// @Produce json
+// @Param date query string true "Date (YYYY-MM-DD)"
+// @Success 200 {object} models.DailySummary
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/dashboard/daily-summary [get]
+func getDailySummary(c *gin.Context) {
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(401, models.ErrorResponse{Error: "Unauthorized"})
+		return
+	}
+	userClaims := claims.(jwt.MapClaims)
+	role, _ := userClaims["role"].(string)
+	if role != "hr" && role != "admin" {
+		c.JSON(403, models.ErrorResponse{Error: "Forbidden: HR or admin only"})
+		return
+	}
+	date := c.Query("date")
+	if date == "" {
+		c.JSON(400, models.ErrorResponse{Error: "Missing date"})
+		return
+	}
+	var summary models.DailySummary
+	err := db.DB.Raw("SELECT * FROM daily_summary WHERE date = ?", date).Scan(&summary).Error
+	if err != nil {
+		c.JSON(500, models.ErrorResponse{Error: "Failed to fetch daily summary", Details: err.Error()})
+		return
+	}
+	if summary.Date == "" {
+		c.JSON(404, models.ErrorResponse{Error: "No summary for this date"})
+		return
+	}
+	c.JSON(200, summary)
+}
+
+// @Summary Get all checkins for a date (view)
+// @Description Returns all checkins for a given date from daily_checkins_view. HR/admin only.
+// @Tags dashboard
+// @Produce json
+// @Param date query string true "Date (YYYY-MM-DD)"
+// @Success 200 {array} map[string]interface{}
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/dashboard/checkins/view [get]
+func getCheckinsView(c *gin.Context) {
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(401, models.ErrorResponse{Error: "Unauthorized"})
+		return
+	}
+	userClaims := claims.(jwt.MapClaims)
+	role, _ := userClaims["role"].(string)
+	if role != "hr" && role != "admin" {
+		c.JSON(403, models.ErrorResponse{Error: "Forbidden: HR or admin only"})
+		return
+	}
+	date := c.Query("date")
+	if date == "" {
+		c.JSON(400, models.ErrorResponse{Error: "Missing date"})
+		return
+	}
+	var rows []map[string]interface{}
+	err := db.DB.Raw("SELECT * FROM daily_checkins_view WHERE date = ?", date).Scan(&rows).Error
+	if err != nil {
+		c.JSON(500, models.ErrorResponse{Error: "Failed to fetch checkins view", Details: err.Error()})
+		return
+	}
+	c.JSON(200, rows)
+}
+
+// @Summary Get individual attendance (checkin + absence + user)
+// @Description Returns checkin, absence, and user info for a given user/date. HR/admin only.
+// @Tags dashboard
+// @Produce json
+// @Param user_id query int true "User ID"
+// @Param date query string true "Date (YYYY-MM-DD)"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/dashboard/attendance/individual [get]
+func getIndividualAttendance(c *gin.Context) {
+	userID := c.Query("user_id")
+	date := c.Query("date")
+	if userID == "" || date == "" {
+		c.JSON(400, models.ErrorResponse{Error: "Missing user_id or date"})
+		return
+	}
+	var user models.User
+	if err := db.DB.First(&user, userID).Error; err != nil {
+		c.JSON(404, models.ErrorResponse{Error: "User not found"})
+		return
+	}
+	var checkin models.Checkin
+	var absence models.Absence
+	checkinErr := db.DB.Where("user_id = ? AND date = ?", userID, date).First(&checkin).Error
+	absenceErr := db.DB.Where("user_id = ? AND date = ?", userID, date).First(&absence).Error
+
+	c.JSON(200, gin.H{
+		"user":    user,
+		"checkin": ifNoRecordReturnNull(checkinErr, checkin),
+		"absence": ifNoRecordReturnNull(absenceErr, absence),
+	})
+}
+
+func ifNoRecordReturnNull(err error, v interface{}) interface{} {
+	if err != nil {
+		return nil
+	}
+	return v
+}
+
+// @Summary HR/Admin create check-in for any user/date
+// @Description Create a check-in for any user/date, even if a soft-deleted one exists. If a deleted check-in exists, restore and update it.
+// @Tags dashboard
+// @Accept json
+// @Produce json
+// @Param checkin body models.CheckinRequest true "Check-in data"
+// @Success 200 {object} models.CheckinResponse
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/dashboard/checkins [post]
+func createOrReplaceCheckinForHR(c *gin.Context) {
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(401, models.ErrorResponse{Error: "Unauthorized"})
+		return
+	}
+	userClaims := claims.(jwt.MapClaims)
+	role, _ := userClaims["role"].(string)
+	if role != "hr" && role != "admin" {
+		c.JSON(403, models.ErrorResponse{Error: "Forbidden: HR or admin only"})
+		return
+	}
+	var req models.CheckinRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, models.ErrorResponse{Error: "Invalid request", Details: err.Error()})
+		return
+	}
+	var checkin models.Checkin
+	// Try to find even soft-deleted
+	err := db.DB.Unscoped().Where("user_id = ? AND date = ?", req.UserID, req.Date).First(&checkin).Error
+	if err == nil {
+		// Restore if deleted
+		if checkin.Deleted {
+			checkin.Deleted = false
+		}
+		// Update fields
+		checkin.Time = parseTimeOrNow(req.Time, req.Date)
+		checkin.LocationType = req.LocationType
+		checkin.LocationDetail = req.LocationDetail
+		checkin.GPSLat = req.GPSLat
+		checkin.GPSLong = req.GPSLong
+		checkin.Notes = req.Notes
+		checkin.Late = req.LateReason != ""
+		checkin.LateReason = req.LateReason
+		if err := db.DB.Save(&checkin).Error; err != nil {
+			logger.Log.Error("Failed to update check-in (dashboard)",
+				zap.String("endpoint", c.FullPath()),
+				zap.String("method", c.Request.Method),
+				zap.String("user", userClaims["email"].(string)),
+				zap.Any("payload", req),
+				zap.Error(err),
+			)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update check-in", "details": err.Error()})
+			return
+		}
+	} else {
+		// Create new
+		checkin = models.Checkin{
+			UserID:         req.UserID,
+			Date:           req.Date,
+			Time:           parseTimeOrNow(req.Time, req.Date),
+			LocationType:   req.LocationType,
+			LocationDetail: req.LocationDetail,
+			GPSLat:         req.GPSLat,
+			GPSLong:        req.GPSLong,
+			Notes:          req.Notes,
+			Late:           req.LateReason != "",
+			LateReason:     req.LateReason,
+		}
+		if err := db.DB.Create(&checkin).Error; err != nil {
+			c.JSON(500, models.ErrorResponse{Error: "Failed to create check-in", Details: err.Error()})
+			return
+		}
+	}
+	resp := models.CheckinResponse{
+		ID:             checkin.ID,
+		UserID:         checkin.UserID,
+		Date:           checkin.Date,
+		Time:           checkin.Time.Format(time.RFC3339),
+		LocationType:   checkin.LocationType,
+		LocationDetail: checkin.LocationDetail,
+		GPSLat:         checkin.GPSLat,
+		GPSLong:        checkin.GPSLong,
+		Notes:          checkin.Notes,
+		Late:           checkin.Late,
+		LateReason:     checkin.LateReason,
+		CreatedAt:      checkin.CreatedAt.Format(time.RFC3339),
+	}
+	c.JSON(200, resp)
+}
+
+func parseTimeOrNow(timeStr, dateStr string) time.Time {
+	if timeStr != "" {
+		// Try RFC3339 with and without timezone
+		layouts := []string{
+			time.RFC3339,
+			"2006-01-02T15:04:05", // no timezone
+			"2006-01-02 15:04:05",
+		}
+		for _, layout := range layouts {
+			if t, err := time.Parse(layout, timeStr); err == nil {
+				return t
+			}
+		}
+	}
+	t, _ := time.Parse("2006-01-02 15:04:05", dateStr+" 09:00:00")
+	return t
+}
+
+// @Summary Get monthly analytics
+// @Description Returns monthly attendance analytics. HR/admin only.
+// @Tags dashboard
+// @Produce json
+// @Success 200 {object} []models.MonthlyStat
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/dashboard/analytics/monthly [get]
+func getMonthlyAnalytics(c *gin.Context) {
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userClaims := claims.(jwt.MapClaims)
+	role, _ := userClaims["role"].(string)
+	if role != "hr" && role != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: HR or admin only"})
+		return
+	}
+	var stats []models.MonthlyStat
+	db.DB.Raw(`
+		SELECT
+			to_char(date::date, 'YYYY-MM') AS month,
+			COUNT(*) AS total,
+			SUM(CASE WHEN late THEN 1 ELSE 0 END) AS late,
+			SUM(CASE WHEN overtime THEN 1 ELSE 0 END) AS overtime
+		FROM checkins
+		WHERE deleted = false
+		GROUP BY month
+		ORDER BY month DESC
+	`).Scan(&stats)
+	c.JSON(http.StatusOK, stats)
+}
+
+// @Summary Get absence heatmap
+// @Description Returns a list of dates with counts of absences. HR/admin only.
+// @Tags dashboard
+// @Produce json
+// @Success 200 {object} []struct { Date string; Count int64 }
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/dashboard/analytics/heatmap [get]
+func getAbsenceHeatmap(c *gin.Context) {
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userClaims := claims.(jwt.MapClaims)
+	role, _ := userClaims["role"].(string)
+	if role != "hr" && role != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: HR or admin only"})
+		return
+	}
+	var heatmap []struct {
+		Date  string
+		Count int64
+	}
+	db.DB.Raw(`
+		SELECT date, COUNT(*) AS count
+		FROM absences
+		WHERE deleted = false
+		GROUP BY date
+		ORDER BY date
+	`).Scan(&heatmap)
+	c.JSON(http.StatusOK, heatmap)
+}
+
+// @Summary Get overtime stats
+// @Description Returns a list of dates with counts of overtime. HR/admin only.
+// @Tags dashboard
+// @Produce json
+// @Success 200 {object} []struct { Date string; Overtime int64 }
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/dashboard/analytics/overtime [get]
+func getOvertimeStats(c *gin.Context) {
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userClaims := claims.(jwt.MapClaims)
+	role, _ := userClaims["role"].(string)
+	if role != "hr" && role != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: HR or admin only"})
+		return
+	}
+	var overtime []struct {
+		Date     string
+		Overtime int64
+	}
+	db.DB.Raw(`
+		SELECT date, SUM(CASE WHEN overtime THEN 1 ELSE 0 END) AS overtime
+		FROM checkins
+		WHERE deleted = false
+		GROUP BY date
+		ORDER BY date
+	`).Scan(&overtime)
+	c.JSON(http.StatusOK, overtime)
+}
+
+// @Summary Get late check-in prediction
+// @Description Returns a list of late check-in predictions for the next 7 days. HR/admin only.
+// @Tags dashboard
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/dashboard/analytics/prediction [get]
+func getLateCheckinPrediction(c *gin.Context) {
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userClaims := claims.(jwt.MapClaims)
+	role, _ := userClaims["role"].(string)
+	if role != "hr" && role != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: HR or admin only"})
+		return
+	}
+	var daily []struct {
+		Date string
+		Late int64
+	}
+	db.DB.Raw(`
+		SELECT date, SUM(CASE WHEN late THEN 1 ELSE 0 END) AS late
+		FROM checkins
+		WHERE deleted = false
+		GROUP BY date
+		ORDER BY date DESC
+		LIMIT 30
+	`).Scan(&daily)
+
+	// Calculate 7-day moving average
+	var movingAvg []float64
+	for i := 0; i < len(daily)-6; i++ {
+		sum := int64(0)
+		for j := 0; j < 7; j++ {
+			sum += daily[i+j].Late
+		}
+		movingAvg = append(movingAvg, float64(sum)/7.0)
+	}
+	c.JSON(200, gin.H{"moving_average": movingAvg})
 }

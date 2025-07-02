@@ -2,16 +2,17 @@ package handlers
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
 	"BE-ABSTI-CLOCKIN/internal/db"
+	"BE-ABSTI-CLOCKIN/internal/logger"
 	"BE-ABSTI-CLOCKIN/internal/models"
-
-	"log"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"go.uber.org/zap"
 )
 
 func RegisterCheckinRoutes(r *gin.RouterGroup) {
@@ -21,6 +22,9 @@ func RegisterCheckinRoutes(r *gin.RouterGroup) {
 	r.GET("/today", getTodayCheckin)
 	r.PUT("/:id", updateCheckin)
 	r.DELETE("/:id", deleteCheckin)
+	r.POST("/checkout", submitCheckout)
+	r.PUT("/checkout/:id", updateCheckoutForHR)
+	r.POST("/batch-approve", batchApproveCheckins)
 }
 
 // @Summary Submit daily check-in
@@ -48,10 +52,7 @@ func submitCheckin(c *gin.Context) {
 		return
 	}
 	userClaims := claims.(jwt.MapClaims)
-	log.Printf("JWT claims: %+v\n", userClaims)
-	_, _ = userClaims["role"].(string)
 	userID, _ := userClaims["user_id"].(float64)
-	log.Printf("Looking up user with ID: %v", userID)
 
 	// Fetch user for check-in config
 	var user models.User
@@ -64,12 +65,10 @@ func submitCheckin(c *gin.Context) {
 	now := time.Now().UTC()
 	var checkinDT time.Time
 	if req.Time != "" {
-		// Try to parse as RFC3339 (full timestamp)
 		t, err := time.Parse(time.RFC3339, req.Time)
 		if err == nil {
 			checkinDT = t
 		} else {
-			// Fallback: treat as "HH:MM:SS" and combine with date
 			checkinDateTimeStr := req.Date + "T" + req.Time
 			loc, err := time.LoadLocation(user.Timezone)
 			if err != nil {
@@ -82,7 +81,6 @@ func submitCheckin(c *gin.Context) {
 			}
 		}
 	} else {
-		// Default: use now
 		checkinDT = now.In(time.UTC)
 	}
 
@@ -100,10 +98,7 @@ func submitCheckin(c *gin.Context) {
 		startTime = "09:00"
 	}
 
-	// Parse check-in time in user's local tz
 	dateStr := checkinDT.In(loc).Format("2006-01-02")
-
-	// Parse threshold time for that day
 	thresholdDT, err := time.ParseInLocation("2006-01-02T15:04", dateStr+"T"+startTime, loc)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Invalid check-in threshold config"})
@@ -136,11 +131,6 @@ func submitCheckin(c *gin.Context) {
 			Late:           late,
 			LateReason:     req.LateReason,
 		}
-		err = db.DB.Create(&checkin).Error
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to create check-in", Details: err.Error()})
-			return
-		}
 	} else {
 		// Exists, update
 		checkin.Time = checkinDT
@@ -151,12 +141,52 @@ func submitCheckin(c *gin.Context) {
 		checkin.Notes = req.Notes
 		checkin.Late = late
 		checkin.LateReason = req.LateReason
-		err = db.DB.Save(&checkin).Error
-		if err != nil {
+	}
+
+	// --- Absence integration ---
+	if late {
+		// Check if absence already exists for this user/date
+		var absence models.Absence
+		absenceErr := db.DB.Where("user_id = ? AND date = ?", user.ID, dateStr).First(&absence).Error
+		if absenceErr != nil {
+			// Not found, create absence
+			absence = models.Absence{
+				UserID: user.ID,
+				Date:   dateStr,
+				Type:   "late",
+				Reason: "Auto-created from check-in",
+			}
+			if err := db.DB.Create(&absence).Error; err == nil {
+				checkin.AbsenceID = &absence.ID
+				// Notify HR/admin (replace with your real HR email) TODO: Replace with HR email
+				go models.SendMail("hr@yourcompany.com", "Absence Alert",
+					fmt.Sprintf("User %s was late on %s", user.Email, dateStr))
+			}
+		} else {
+			checkin.AbsenceID = &absence.ID
+		}
+	}
+
+	// Save checkin (create or update)
+	if checkin.ID == 0 {
+		if err := db.DB.Create(&checkin).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to create check-in", Details: err.Error()})
+			return
+		}
+	} else {
+		if err := db.DB.Save(&checkin).Error; err != nil {
+			logger.Log.Error("Failed to update check-in",
+				zap.String("endpoint", c.FullPath()),
+				zap.String("method", c.Request.Method),
+				zap.String("user", GetUserEmail(c)),
+				zap.Any("payload", req),
+				zap.Error(err),
+			)
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to update check-in", Details: err.Error()})
 			return
 		}
 	}
+
 	resp := models.CheckinResponse{
 		ID:             checkin.ID,
 		UserID:         checkin.UserID,
@@ -170,6 +200,7 @@ func submitCheckin(c *gin.Context) {
 		Late:           checkin.Late,
 		LateReason:     checkin.LateReason,
 		CreatedAt:      checkin.CreatedAt.Format(time.RFC3339),
+		AbsenceID:      checkin.AbsenceID,
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -198,16 +229,27 @@ func getCheckinHistory(c *gin.Context) {
 	}
 	resp := make([]models.CheckinResponse, len(checkins))
 	for i, ch := range checkins {
+		var checkoutTime *string
+		if ch.CheckoutTime != nil {
+			ts := ch.CheckoutTime.Format(time.RFC3339)
+			checkoutTime = &ts
+		}
 		resp[i] = models.CheckinResponse{
 			ID:             ch.ID,
 			UserID:         ch.UserID,
 			Date:           ch.Date,
+			Time:           ch.Time.Format(time.RFC3339),
 			LocationType:   ch.LocationType,
 			LocationDetail: ch.LocationDetail,
 			GPSLat:         ch.GPSLat,
 			GPSLong:        ch.GPSLong,
 			Notes:          ch.Notes,
+			Late:           ch.Late,
+			LateReason:     ch.LateReason,
 			CreatedAt:      ch.CreatedAt.Format(time.RFC3339),
+			CheckoutTime:   checkoutTime,
+			CheckoutStatus: ch.CheckoutStatus,
+			Overtime:       ch.Overtime,
 		}
 	}
 	c.JSON(http.StatusOK, resp)
@@ -237,16 +279,27 @@ func getTodayCheckin(c *gin.Context) {
 		c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "No check-in for today"})
 		return
 	}
+	var checkoutTime *string
+	if checkin.CheckoutTime != nil {
+		ts := checkin.CheckoutTime.Format(time.RFC3339)
+		checkoutTime = &ts
+	}
 	resp := models.CheckinResponse{
 		ID:             checkin.ID,
 		UserID:         checkin.UserID,
 		Date:           checkin.Date,
+		Time:           checkin.Time.Format(time.RFC3339),
 		LocationType:   checkin.LocationType,
 		LocationDetail: checkin.LocationDetail,
 		GPSLat:         checkin.GPSLat,
 		GPSLong:        checkin.GPSLong,
 		Notes:          checkin.Notes,
+		Late:           checkin.Late,
+		LateReason:     checkin.LateReason,
 		CreatedAt:      checkin.CreatedAt.Format(time.RFC3339),
+		CheckoutTime:   checkoutTime,
+		CheckoutStatus: checkin.CheckoutStatus,
+		Overtime:       checkin.Overtime,
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -310,11 +363,16 @@ func listAllCheckins(c *gin.Context) {
 	q.Find(&checkins)
 	resp := make([]models.CheckinResponse, len(checkins))
 	for i, ch := range checkins {
+		var checkoutTime *string
+		if ch.CheckoutTime != nil {
+			ts := ch.CheckoutTime.Format(time.RFC3339)
+			checkoutTime = &ts
+		}
 		resp[i] = models.CheckinResponse{
 			ID:             ch.ID,
 			UserID:         ch.UserID,
 			Date:           ch.Date,
-			Time:           ch.Time.Format("2006-01-02T15:04:05Z07:00"),
+			Time:           ch.Time.Format(time.RFC3339),
 			LocationType:   ch.LocationType,
 			LocationDetail: ch.LocationDetail,
 			GPSLat:         ch.GPSLat,
@@ -322,7 +380,10 @@ func listAllCheckins(c *gin.Context) {
 			Notes:          ch.Notes,
 			Late:           ch.Late,
 			LateReason:     ch.LateReason,
-			CreatedAt:      ch.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			CreatedAt:      ch.CreatedAt.Format(time.RFC3339),
+			CheckoutTime:   checkoutTime,
+			CheckoutStatus: ch.CheckoutStatus,
+			Overtime:       ch.Overtime,
 		}
 	}
 	c.JSON(200, resp)
@@ -362,4 +423,217 @@ func deleteCheckin(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"message": "Check-in deleted"})
+}
+
+// @Summary Submit daily checkout
+// @Description User submits daily checkout (end-of-day). Only one per day. JWT required. Must have checked in first. Records checkout time, status, and overtime.
+// @Tags checkin
+// @Accept json
+// @Produce json
+// @Param checkout body models.CheckoutRequest true "Checkout data"
+// @Success 200 {object} models.CheckinResponse
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Router /api/checkins/checkout [post]
+func submitCheckout(c *gin.Context) {
+	var req models.CheckoutRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid request", Details: err.Error()})
+		return
+	}
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "Unauthorized"})
+		return
+	}
+	userClaims := claims.(jwt.MapClaims)
+	userID, _ := userClaims["user_id"].(float64)
+	// Find today's check-in
+	today := time.Now().Format("2006-01-02")
+	var checkin models.Checkin
+	err := db.DB.Where("user_id = ? AND date = ?", uint(userID), today).First(&checkin).Error
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "No check-in found for today. You must check in before checking out."})
+		return
+	}
+	if checkin.CheckoutTime != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Already checked out for today."})
+		return
+	}
+	now := time.Now().UTC()
+	if now.Before(checkin.Time) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Checkout time cannot be before check-in time."})
+		return
+	}
+	checkin.CheckoutTime = &now
+	checkin.CheckoutStatus = req.Status
+	checkin.Overtime = req.Overtime
+	if err := db.DB.Save(&checkin).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to record checkout", Details: err.Error()})
+		return
+	}
+	resp := models.CheckinResponse{
+		ID:             checkin.ID,
+		UserID:         checkin.UserID,
+		Date:           checkin.Date,
+		Time:           checkin.Time.Format(time.RFC3339),
+		LocationType:   checkin.LocationType,
+		LocationDetail: checkin.LocationDetail,
+		GPSLat:         checkin.GPSLat,
+		GPSLong:        checkin.GPSLong,
+		Notes:          checkin.Notes,
+		Late:           checkin.Late,
+		LateReason:     checkin.LateReason,
+		CreatedAt:      checkin.CreatedAt.Format(time.RFC3339),
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// @Summary Admin/HR update checkout
+// @Description HR or admin can update any user's checkout info (time, status, overtime). JWT with hr/admin role required.
+// @Tags checkin
+// @Accept json
+// @Produce json
+// @Param id path int true "Check-in ID"
+// @Param checkout body models.CheckoutUpdateRequest true "Checkout update data"
+// @Success 200 {object} models.CheckinResponse
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/checkins/checkout/{id} [put]
+func updateCheckoutForHR(c *gin.Context) {
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "Unauthorized"})
+		return
+	}
+	userClaims := claims.(jwt.MapClaims)
+	role, _ := userClaims["role"].(string)
+	if role != "hr" && role != "admin" {
+		c.JSON(http.StatusForbidden, models.ErrorResponse{Error: "Forbidden: HR or admin only"})
+		return
+	}
+	id := c.Param("id")
+	var req models.CheckoutUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid request", Details: err.Error()})
+		return
+	}
+	var checkin models.Checkin
+	if err := db.DB.First(&checkin, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "Check-in not found"})
+		return
+	}
+	if req.CheckoutTime != "" {
+		ts, err := time.Parse(time.RFC3339, req.CheckoutTime)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid checkout_time format (must be RFC3339)"})
+			return
+		}
+		checkin.CheckoutTime = &ts
+	}
+	if req.CheckoutStatus != "" {
+		checkin.CheckoutStatus = req.CheckoutStatus
+	}
+	checkin.Overtime = req.Overtime
+	if checkin.CheckoutTime != nil && checkin.CheckoutTime.Before(checkin.Time) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Checkout time cannot be before check-in time."})
+		return
+	}
+	if err := db.DB.Save(&checkin).Error; err != nil {
+		logger.Log.Error("Failed to update checkout",
+			zap.String("endpoint", c.FullPath()),
+			zap.String("method", c.Request.Method),
+			zap.String("user", GetUserEmail(c)),
+			zap.Any("payload", req),
+			zap.Error(err),
+		)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to update checkout", Details: err.Error()})
+		return
+	}
+	var checkoutTime *string
+	if checkin.CheckoutTime != nil {
+		ts := checkin.CheckoutTime.Format(time.RFC3339)
+		checkoutTime = &ts
+	}
+	resp := models.CheckinResponse{
+		ID:             checkin.ID,
+		UserID:         checkin.UserID,
+		Date:           checkin.Date,
+		Time:           checkin.Time.Format(time.RFC3339),
+		LocationType:   checkin.LocationType,
+		LocationDetail: checkin.LocationDetail,
+		GPSLat:         checkin.GPSLat,
+		GPSLong:        checkin.GPSLong,
+		Notes:          checkin.Notes,
+		Late:           checkin.Late,
+		LateReason:     checkin.LateReason,
+		CreatedAt:      checkin.CreatedAt.Format(time.RFC3339),
+		CheckoutTime:   checkoutTime,
+		CheckoutStatus: checkin.CheckoutStatus,
+		Overtime:       checkin.Overtime,
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// @Summary Batch approve check-ins (HR/admin)
+// @Description HR/admin can approve or reject multiple check-ins in one API call.
+// @Tags checkin
+// @Accept json
+// @Produce json
+// @Param body body models.BatchApproveRequest true "Batch approve request"
+// @Success 200 {object} models.BatchApproveResponse
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/checkins/batch-approve [post]
+func batchApproveCheckins(c *gin.Context) {
+	type reqBody struct {
+		IDs    []uint `json:"ids"`
+		Action string `json:"action"` // "approve" or "reject"
+		Reason string `json:"reason"`
+	}
+	var req reqBody
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.IDs) == 0 || (req.Action != "approve" && req.Action != "reject") {
+		c.JSON(400, gin.H{"error": "Invalid request"})
+		return
+	}
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(401, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userClaims := claims.(jwt.MapClaims)
+	role, _ := userClaims["role"].(string)
+	// userEmail, _ := userClaims["email"].(string)
+	if role != "hr" && role != "admin" {
+		c.JSON(403, gin.H{"error": "Forbidden: HR or admin only"})
+		return
+	}
+
+	tx := db.DB.Begin()
+	var processed, failed int
+	for _, id := range req.IDs {
+		var ch models.Checkin
+		if err := tx.First(&ch, id).Error; err != nil || ch.Deleted {
+			failed++
+			continue
+		}
+		// You can add more status fields if needed, for now just log action
+		ch.Notes = req.Reason
+		if err := tx.Save(&ch).Error; err != nil {
+			failed++
+			continue
+		}
+		// Optionally: add audit log here
+		processed++
+	}
+	if failed > 0 {
+		tx.Rollback()
+		c.JSON(500, gin.H{"success": false, "processed": processed, "failed": failed, "message": "Some items failed, transaction rolled back"})
+		return
+	}
+	tx.Commit()
+	c.JSON(200, gin.H{"success": true, "processed": processed, "failed": failed, "message": fmt.Sprintf("Processed %d check-ins", processed)})
 }

@@ -6,9 +6,12 @@ import (
 	"time"
 
 	"BE-ABSTI-CLOCKIN/internal/db"
+	"BE-ABSTI-CLOCKIN/internal/logger"
 	"BE-ABSTI-CLOCKIN/internal/models"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
+	"go.uber.org/zap"
 )
 
 func RegisterAbsenceRoutes(r *gin.RouterGroup) {
@@ -20,6 +23,7 @@ func RegisterAbsenceRoutes(r *gin.RouterGroup) {
 	r.PATCH("/:id/lock", lockAbsence)
 	r.GET("/all", listAllAbsences)
 	r.DELETE("/:id", deleteAbsence)
+	r.POST("/batch-approve", batchApproveAbsences)
 }
 
 // @Summary Report absence/late/medical
@@ -35,6 +39,13 @@ func RegisterAbsenceRoutes(r *gin.RouterGroup) {
 func reportAbsence(c *gin.Context) {
 	var req models.AbsenceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		logger.Log.Error("Invalid absence request",
+			zap.String("endpoint", c.FullPath()),
+			zap.String("method", c.Request.Method),
+			zap.String("user", getUserEmail(c)),
+			zap.Any("payload", req),
+			zap.Error(err),
+		)
 		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid request", Details: err.Error()})
 		return
 	}
@@ -56,6 +67,13 @@ func reportAbsence(c *gin.Context) {
 		Reason: req.Reason,
 	}
 	if err := db.DB.Create(&absence).Error; err != nil {
+		logger.Log.Error("Failed to create absence",
+			zap.String("endpoint", c.FullPath()),
+			zap.String("method", c.Request.Method),
+			zap.String("user", getUserEmail(c)),
+			zap.Any("payload", req),
+			zap.Error(err),
+		)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to create absence", Details: err.Error()})
 		return
 	}
@@ -136,6 +154,12 @@ func updateAbsence(c *gin.Context) {
 	id := c.Param("id")
 	var absence models.Absence
 	if err := db.DB.First(&absence, id).Error; err != nil {
+		logger.Log.Error("Absence not found",
+			zap.String("endpoint", c.FullPath()),
+			zap.String("method", c.Request.Method),
+			zap.String("user", getUserEmail(c)),
+			zap.Error(err),
+		)
 		c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "Absence not found"})
 		return
 	}
@@ -149,6 +173,13 @@ func updateAbsence(c *gin.Context) {
 	}
 	var req models.AbsenceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		logger.Log.Error("Invalid absence request",
+			zap.String("endpoint", c.FullPath()),
+			zap.String("method", c.Request.Method),
+			zap.String("user", getUserEmail(c)),
+			zap.Any("payload", req),
+			zap.Error(err),
+		)
 		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid request", Details: err.Error()})
 		return
 	}
@@ -156,6 +187,13 @@ func updateAbsence(c *gin.Context) {
 	absence.Type = req.Type
 	absence.Reason = req.Reason
 	if err := db.DB.Save(&absence).Error; err != nil {
+		logger.Log.Error("Failed to update absence",
+			zap.String("endpoint", c.FullPath()),
+			zap.String("method", c.Request.Method),
+			zap.String("user", getUserEmail(c)),
+			zap.Any("payload", req),
+			zap.Error(err),
+		)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to update absence", Details: err.Error()})
 		return
 	}
@@ -401,4 +439,69 @@ func deleteAbsence(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"message": "Absence deleted"})
+}
+
+// POST /api/absences/batch-approve
+func batchApproveAbsences(c *gin.Context) {
+	type reqBody struct {
+		IDs    []uint `json:"ids"`
+		Action string `json:"action"` // "approve" or "reject"
+		Reason string `json:"reason"`
+	}
+	var req reqBody
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.IDs) == 0 || (req.Action != "approve" && req.Action != "reject") {
+		c.JSON(400, gin.H{"error": "Invalid request"})
+		return
+	}
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(401, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userClaims := claims.(map[string]interface{})
+	role, _ := userClaims["role"].(string)
+	// userEmail, _ := userClaims["email"].(string)
+	if role != "hr" && role != "admin" {
+		c.JSON(403, gin.H{"error": "Forbidden: HR or admin only"})
+		return
+	}
+
+	tx := db.DB.Begin()
+	var processed, failed int
+	for _, id := range req.IDs {
+		var ab models.Absence
+		if err := tx.First(&ab, id).Error; err != nil || ab.Deleted {
+			failed++
+			continue
+		}
+		// You can add more status fields if needed, for now just log action
+		ab.Reason = req.Reason
+		ab.Locked = true // lock after decision
+		if err := tx.Save(&ab).Error; err != nil {
+			failed++
+			continue
+		}
+		// Optionally: add audit log here
+		processed++
+	}
+	if failed > 0 {
+		tx.Rollback()
+		c.JSON(500, gin.H{"success": false, "processed": processed, "failed": failed, "message": "Some items failed, transaction rolled back"})
+		return
+	}
+	tx.Commit()
+	c.JSON(200, gin.H{"success": true, "processed": processed, "failed": failed, "message": fmt.Sprintf("Processed %d absences", processed)})
+}
+
+func getUserEmail(c *gin.Context) string {
+	claims, ok := c.Get("user")
+	if !ok {
+		return ""
+	}
+	userClaims, ok := claims.(jwt.MapClaims)
+	if !ok {
+		return ""
+	}
+	email, _ := userClaims["email"].(string)
+	return email
 }
