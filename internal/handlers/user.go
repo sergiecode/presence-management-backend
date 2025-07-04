@@ -4,17 +4,18 @@ import (
 	"fmt"
 
 	"BE-ABSTI-CLOCKIN/internal/db"
+	"BE-ABSTI-CLOCKIN/internal/logger"
 	"BE-ABSTI-CLOCKIN/internal/models"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"go.uber.org/zap"
 )
 
 func RegisterUserRoutes(r *gin.RouterGroup) {
 	r.GET("/me", getMe)
 	// Admin-only endpoints
 	r.GET("/", listUsers)        // GET /api/users
-	r.POST("/", createUser)      // POST /api/users
 	r.GET("/:id", getUserByID)   // GET /api/users/:id
 	r.PUT("/:id", updateUser)    // PUT /api/users/:id
 	r.DELETE("/:id", deleteUser) // DELETE /api/users/:id
@@ -44,6 +45,12 @@ func getMe(c *gin.Context) {
 	}
 	var user models.User
 	if err := db.DB.Where("email = ?", email).First(&user).Error; err != nil {
+		logger.Log.Error("User not found",
+			zap.String("endpoint", c.FullPath()),
+			zap.String("method", c.Request.Method),
+			zap.String("user", email),
+			zap.Error(err),
+		)
 		c.JSON(404, gin.H{"error": "User not found"})
 		return
 	}
@@ -91,62 +98,6 @@ func listUsers(c *gin.Context) {
 	c.JSON(200, users)
 }
 
-// @Summary Create user
-// @Description Admin only. Create a new user. Email must be unique.
-// @Tags users
-// @Accept json
-// @Produce json
-// @Param user body models.User true "User data"
-// @Success 201 {object} models.User
-// @Failure 400 {object} gin.H
-// @Failure 401 {object} gin.H
-// @Failure 403 {object} gin.H
-// @Router /api/users [post]
-func createUser(c *gin.Context) {
-	claims, ok := c.Get("user")
-	if !ok {
-		c.JSON(401, gin.H{"error": "Unauthorized"})
-		return
-	}
-	userClaims := claims.(jwt.MapClaims)
-	role, _ := userClaims["role"].(string)
-	if role != "admin" {
-		c.JSON(403, gin.H{"error": "Forbidden: admin only"})
-		return
-	}
-	var req models.User
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "Invalid request", "details": err.Error()})
-		return
-	}
-	if req.Email == "" || req.Name == "" {
-		c.JSON(400, gin.H{"error": "Email and name are required"})
-		return
-	}
-	var existing models.User
-	if err := db.DB.Where("email = ?", req.Email).First(&existing).Error; err == nil {
-		c.JSON(400, gin.H{"error": "User with this email already exists"})
-		return
-	}
-	user := models.User{
-		Email:                 req.Email,
-		Name:                  req.Name,
-		Picture:               req.Picture,
-		Role:                  req.Role,
-		CheckinStartTime:      req.CheckinStartTime,
-		Timezone:              req.Timezone,
-		NotificationOffsetMin: req.NotificationOffsetMin,
-	}
-	if user.Role == "" {
-		user.Role = "employee"
-	}
-	if err := db.DB.Create(&user).Error; err != nil {
-		c.JSON(500, gin.H{"error": "Failed to create user", "details": err.Error()})
-		return
-	}
-	c.JSON(201, user)
-}
-
 // @Summary Get user by ID
 // @Description Admin only. Get user details by ID.
 // @Tags users
@@ -172,6 +123,12 @@ func getUserByID(c *gin.Context) {
 	id := c.Param("id")
 	var user models.User
 	if err := db.DB.First(&user, id).Error; err != nil || user.Deactivated {
+		logger.Log.Error("User not found or deactivated",
+			zap.String("endpoint", c.FullPath()),
+			zap.String("method", c.Request.Method),
+			zap.String("user", getUserEmail(c)),
+			zap.Error(err),
+		)
 		c.JSON(404, gin.H{"error": "User not found"})
 		return
 	}
@@ -236,6 +193,13 @@ func updateUser(c *gin.Context) {
 		user.NotificationOffsetMin = req.NotificationOffsetMin
 	}
 	if err := db.DB.Save(&user).Error; err != nil {
+		logger.Log.Error("Failed to update user",
+			zap.String("endpoint", c.FullPath()),
+			zap.String("method", c.Request.Method),
+			zap.String("user", getUserEmail(c)),
+			zap.Any("payload", req),
+			zap.Error(err),
+		)
 		c.JSON(500, gin.H{"error": "Failed to update user", "details": err.Error()})
 		return
 	}
