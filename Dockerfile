@@ -5,6 +5,8 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+RUN go install github.com/swaggo/swag/cmd/swag@latest
+RUN /go/bin/swag init -g cmd/main.go --parseInternal --parseDependency -o ./docs
 RUN go build -o absti-api ./cmd/main.go
 
 FROM alpine:latest
