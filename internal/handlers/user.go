@@ -21,6 +21,7 @@ func RegisterUserRoutes(r *gin.RouterGroup) {
 	r.DELETE("/:id", deleteUser) // DELETE /api/users/:id
 	r.PUT("/:id/checkin-config", updateUserCheckinConfig)
 	r.PUT("/users/:id/approve", approveUser)
+	r.PUT("/:id/activate-email", activateUserEmail)
 }
 
 // getMe godoc
@@ -332,4 +333,41 @@ func approveUser(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"message": "User approved"})
+}
+
+// Activate user email (HR/admin only)
+// @Summary Activate user email
+// @Description HR/admin can set email_confirmed=true for a user
+// @Tags users
+// @Produce json
+// @Param id path int true "User ID"
+// @Success 200 {object} gin.H
+// @Failure 401 {object} gin.H
+// @Failure 403 {object} gin.H
+// @Failure 404 {object} gin.H
+// @Router /api/users/{id}/activate-email [put]
+func activateUserEmail(c *gin.Context) {
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(401, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userClaims := claims.(jwt.MapClaims)
+	role, _ := userClaims["role"].(string)
+	if role != "hr" && role != "admin" {
+		c.JSON(403, gin.H{"error": "Forbidden: HR or admin only"})
+		return
+	}
+	id := c.Param("id")
+	var user models.User
+	if err := db.DB.First(&user, id).Error; err != nil {
+		c.JSON(404, gin.H{"error": "User not found"})
+		return
+	}
+	user.EmailConfirmed = true
+	if err := db.DB.Save(&user).Error; err != nil {
+		c.JSON(500, gin.H{"error": "Failed to activate email"})
+		return
+	}
+	c.JSON(200, gin.H{"message": "User email activated"})
 }

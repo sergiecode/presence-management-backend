@@ -837,7 +837,7 @@ func getMonthlyAnalytics(c *gin.Context) {
 // @Description Returns a list of dates with counts of absences. HR/admin only.
 // @Tags dashboard
 // @Produce json
-// @Success 200 {object} []struct { Date string; Count int64 }
+// @Success 200 {object} []models.AbsenceHeatmapEntry
 // @Failure 401 {object} models.ErrorResponse
 // @Failure 403 {object} models.ErrorResponse
 // @Router /api/dashboard/analytics/heatmap [get]
@@ -853,10 +853,7 @@ func getAbsenceHeatmap(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: HR or admin only"})
 		return
 	}
-	var heatmap []struct {
-		Date  string
-		Count int64
-	}
+	var heatmap []models.AbsenceHeatmapEntry
 	db.DB.Raw(`
 		SELECT date, COUNT(*) AS count
 		FROM absences
@@ -871,7 +868,7 @@ func getAbsenceHeatmap(c *gin.Context) {
 // @Description Returns a list of dates with counts of overtime. HR/admin only.
 // @Tags dashboard
 // @Produce json
-// @Success 200 {object} []struct { Date string; Overtime int64 }
+// @Success 200 {object} []models.OvertimeStatEntry
 // @Failure 401 {object} models.ErrorResponse
 // @Failure 403 {object} models.ErrorResponse
 // @Router /api/dashboard/analytics/overtime [get]
@@ -887,10 +884,7 @@ func getOvertimeStats(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: HR or admin only"})
 		return
 	}
-	var overtime []struct {
-		Date     string
-		Overtime int64
-	}
+	var overtime []models.OvertimeStatEntry
 	db.DB.Raw(`
 		SELECT date, SUM(CASE WHEN overtime THEN 1 ELSE 0 END) AS overtime
 		FROM checkins

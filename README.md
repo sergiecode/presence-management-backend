@@ -2,7 +2,7 @@
 
 ## ⚠️ Requisito: Configuración de .env
 
-Antes de iniciar (con Docker o Go), **debes** crear un archivo `.env`:
+Antes de iniciar (con Docker o Go), **debes** USAR LA RAMA DEVELOP y crear un archivo `.env`:
 
 ```sh
 cp .env.example .env

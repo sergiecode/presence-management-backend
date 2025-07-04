@@ -2,6 +2,13 @@ definitions:
   gin.H:
     additionalProperties: {}
     type: object
+  models.AbsenceHeatmapEntry:
+    properties:
+      count:
+        type: integer
+      date:
+        type: string
+    type: object
   models.AbsenceRequest:
     properties:
       date:
@@ -74,6 +81,29 @@ definitions:
       total:
         type: integer
     type: object
+  models.BatchApproveRequest:
+    properties:
+      action:
+        description: '"approve" or "reject"'
+        type: string
+      ids:
+        items:
+          type: integer
+        type: array
+      reason:
+        type: string
+    type: object
+  models.BatchApproveResponse:
+    properties:
+      failed:
+        type: integer
+      message:
+        type: string
+      processed:
+        type: integer
+      success:
+        type: boolean
+    type: object
   models.CheckinConfigRequest:
     properties:
       checkin_start_time:
@@ -107,12 +137,16 @@ definitions:
       time:
         description: still accept string for backward compatibility
         type: string
+      user_id:
+        type: integer
     required:
     - date
     - location_type
     type: object
   models.CheckinResponse:
     properties:
+      absence_id:
+        type: integer
       checkout_status:
         type: string
       checkout_time:
@@ -226,6 +260,24 @@ definitions:
     properties:
       refresh_token:
         type: string
+    type: object
+  models.MonthlyStat:
+    properties:
+      late:
+        type: integer
+      month:
+        type: string
+      overtime:
+        type: integer
+      total:
+        type: integer
+    type: object
+  models.OvertimeStatEntry:
+    properties:
+      date:
+        type: string
+      overtime:
+        type: integer
     type: object
   models.RefreshRequest:
     properties:
@@ -680,6 +732,40 @@ paths:
       summary: List all check-ins (HR/admin)
       tags:
       - checkin
+  /api/checkins/batch-approve:
+    post:
+      consumes:
+      - application/json
+      description: HR/admin can approve or reject multiple check-ins in one API call.
+      parameters:
+      - description: Batch approve request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.BatchApproveRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.BatchApproveResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: Batch approve check-ins (HR/admin)
+      tags:
+      - checkin
   /api/checkins/checkout:
     post:
       consumes:
@@ -809,6 +895,98 @@ paths:
       summary: Get absence statistics
       tags:
       - dashboard
+  /api/dashboard/analytics/heatmap:
+    get:
+      description: Returns a list of dates with counts of absences. HR/admin only.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.AbsenceHeatmapEntry'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: Get absence heatmap
+      tags:
+      - dashboard
+  /api/dashboard/analytics/monthly:
+    get:
+      description: Returns monthly attendance analytics. HR/admin only.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.MonthlyStat'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: Get monthly analytics
+      tags:
+      - dashboard
+  /api/dashboard/analytics/overtime:
+    get:
+      description: Returns a list of dates with counts of overtime. HR/admin only.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.OvertimeStatEntry'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: Get overtime stats
+      tags:
+      - dashboard
+  /api/dashboard/analytics/prediction:
+    get:
+      description: Returns a list of late check-in predictions for the next 7 days.
+        HR/admin only.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: Get late check-in prediction
+      tags:
+      - dashboard
   /api/dashboard/attendance:
     get:
       description: Returns attendance stats (total check-ins, on-time %, late %) for
@@ -839,6 +1017,44 @@ paths:
           schema:
             $ref: '#/definitions/models.ErrorResponse'
       summary: Get attendance statistics
+      tags:
+      - dashboard
+  /api/dashboard/attendance/individual:
+    get:
+      description: Returns checkin, absence, and user info for a given user/date.
+        HR/admin only.
+      parameters:
+      - description: User ID
+        in: query
+        name: user_id
+        required: true
+        type: integer
+      - description: Date (YYYY-MM-DD)
+        in: query
+        name: date
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: Get individual attendance (checkin + absence + user)
       tags:
       - dashboard
   /api/dashboard/attendance/rollcall:
@@ -925,6 +1141,41 @@ paths:
           schema:
             $ref: '#/definitions/models.ErrorResponse'
       summary: Get audit logs
+      tags:
+      - dashboard
+  /api/dashboard/checkins:
+    post:
+      consumes:
+      - application/json
+      description: Create a check-in for any user/date, even if a soft-deleted one
+        exists. If a deleted check-in exists, restore and update it.
+      parameters:
+      - description: Check-in data
+        in: body
+        name: checkin
+        required: true
+        schema:
+          $ref: '#/definitions/models.CheckinRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.CheckinResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: HR/Admin create check-in for any user/date
       tags:
       - dashboard
   /api/dashboard/checkins/{id}:
@@ -1232,6 +1483,37 @@ paths:
           schema:
             $ref: '#/definitions/gin.H'
       summary: Update user
+      tags:
+      - users
+  /api/users/{id}/activate-email:
+    put:
+      description: HR/admin can set email_confirmed=true for a user
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/gin.H'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/gin.H'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/gin.H'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Activate user email
       tags:
       - users
   /api/users/{id}/approve:

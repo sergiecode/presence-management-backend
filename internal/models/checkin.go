@@ -118,3 +118,30 @@ type MonthlyStat struct {
 	Late     int64  `json:"late"`
 	Overtime int64  `json:"overtime"`
 }
+
+// BatchApproveRequest is used for batch approval/rejection of checkins
+type BatchApproveRequest struct {
+	IDs    []uint `json:"ids"`
+	Action string `json:"action"` // "approve" or "reject"
+	Reason string `json:"reason"`
+}
+
+// BatchApproveResponse is optional, but you might want it for docs
+type BatchApproveResponse struct {
+	Success   bool   `json:"success"`
+	Processed int    `json:"processed"`
+	Failed    int    `json:"failed"`
+	Message   string `json:"message"`
+}
+
+// AbsenceHeatmapEntry is used for /api/dashboard/analytics/heatmap
+type AbsenceHeatmapEntry struct {
+	Date  string `json:"date"`
+	Count int64  `json:"count"`
+}
+
+// OvertimeStatEntry is used for /api/dashboard/analytics/overtime
+type OvertimeStatEntry struct {
+	Date     string `json:"date"`
+	Overtime int64  `json:"overtime"`
+}
