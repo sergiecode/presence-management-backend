@@ -14,6 +14,7 @@ import (
 
 func RegisterUserRoutes(r *gin.RouterGroup) {
 	r.GET("/me", getMe)
+	r.PATCH("/me", updateMyProfile) //PATCH BECAUSE PARTIAL UPDATE
 	// Admin-only endpoints
 	r.GET("/", listUsers)        // GET /api/users
 	r.GET("/:id", getUserByID)   // GET /api/users/:id
@@ -95,7 +96,8 @@ func listUsers(c *gin.Context) {
 		}
 	}
 	var users []models.User
-	db.DB.Where("deactivated = ?", false).Offset((page - 1) * pageSize).Limit(pageSize).Find(&users)
+	db.DB.Where("deactivated = ? OR pending_approval = ?", false, true).
+		Offset((page - 1) * pageSize).Limit(pageSize).Find(&users)
 	c.JSON(200, users)
 }
 
@@ -370,4 +372,59 @@ func activateUserEmail(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"message": "User email activated"})
+}
+
+// PATCH /api/users/me
+func updateMyProfile(c *gin.Context) {
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(401, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userClaims := claims.(jwt.MapClaims)
+	userID, _ := userClaims["user_id"].(float64)
+
+	var user models.User
+	if err := db.DB.First(&user, uint(userID)).Error; err != nil {
+		c.JSON(404, gin.H{"error": "User not found"})
+		return
+	}
+
+	var req struct {
+		Picture               *string `json:"picture"`
+		Surname               *string `json:"surname"`
+		Phone                 *string `json:"phone"`
+		Timezone              *string `json:"timezone"`
+		CheckinStartTime      *string `json:"checkin_start_time"`
+		NotificationOffsetMin *int    `json:"notification_offset_min"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid request", "details": err.Error()})
+		return
+	}
+
+	if req.Picture != nil {
+		user.Picture = *req.Picture
+	}
+	if req.Surname != nil {
+		user.Surname = *req.Surname
+	}
+	if req.Phone != nil {
+		user.Phone = *req.Phone
+	}
+	if req.Timezone != nil {
+		user.Timezone = *req.Timezone
+	}
+	if req.CheckinStartTime != nil {
+		user.CheckinStartTime = *req.CheckinStartTime
+	}
+	if req.NotificationOffsetMin != nil {
+		user.NotificationOffsetMin = *req.NotificationOffsetMin
+	}
+
+	if err := db.DB.Save(&user).Error; err != nil {
+		c.JSON(500, gin.H{"error": "Failed to update profile", "details": err.Error()})
+		return
+	}
+	c.JSON(200, user)
 }

@@ -183,7 +183,8 @@ func updateCheckinForHR(c *gin.Context) {
 		return
 	}
 	old := checkin // shallow copy for audit
-	checkin.Date = req.Date
+	parsedCheckinTime, _ := time.Parse(time.RFC3339, req.Time)
+	checkin.Time = parsedCheckinTime // parse req.CheckinTime as time.Time before
 	checkin.LocationType = req.LocationType
 	checkin.LocationDetail = req.LocationDetail
 	checkin.GPSLat = req.GPSLat
@@ -218,6 +219,7 @@ func updateCheckinForHR(c *gin.Context) {
 		ID:             checkin.ID,
 		UserID:         checkin.UserID,
 		Date:           checkin.Date,
+		Time:           checkin.Time.Format(time.RFC3339),
 		LocationType:   checkin.LocationType,
 		LocationDetail: checkin.LocationDetail,
 		GPSLat:         checkin.GPSLat,

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -65,35 +66,51 @@ func submitCheckin(c *gin.Context) {
 	}
 
 	// Determine check-in date and time
+	// {
+	//   "time": "2025-07-07T08:10:00Z"
+	// }
+	//
+	//   "time": "2025-07-07T08:10:00"
+	// }
+	// {
+	//   "time": "2025-07-07 08:10:00"
+	// }
+	// {
+	//   "time": "2025-07-07T08:10"
+	// }
+
 	now := time.Now().UTC()
 	var checkinDT time.Time
 	var dateStr string
 
-	// Parse date - if not provided, use today
 	if req.Date != "" {
-		// Try multiple date formats
-		dateFormats := []string{
-			"2006-01-02",                   // YYYY-MM-DD
-			"2006-01-02 15:04:05-07:00",    // YYYY-MM-DD HH:MM:SS-TZ
-			"2006-01-02 15:04:05",          // YYYY-MM-DD HH:MM:SS
-			"Mon Jan 02 2006 15:04:05 MST", // JavaScript Date string
-		}
+		dateStr = req.Date
+	} else {
+		dateStr = now.Format("2006-01-02")
+	}
 
-		parsed := false
-		for _, format := range dateFormats {
-			if t, err := time.Parse(format, req.Date); err == nil {
-				dateStr = t.Format("2006-01-02")
-				parsed = true
+	if req.Time != "" {
+		// Try RFC3339 and common formats
+		layouts := []string{
+			time.RFC3339,
+			"2006-01-02T15:04:05", // no timezone
+			"2006-01-02 15:04:05",
+			"2006-01-02T15:04",
+		}
+		var err error
+		for _, layout := range layouts {
+			checkinDT, err = time.Parse(layout, req.Time)
+			if err == nil {
 				break
 			}
 		}
-
-		if !parsed {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid date format. Use YYYY-MM-DD"})
-			return
+		if err != nil {
+			// fallback: use dateStr + " 09:00:00"
+			checkinDT, _ = time.Parse("2006-01-02 15:04:05", dateStr+" 09:00:00")
 		}
 	} else {
-		dateStr = now.Format("2006-01-02")
+		// fallback: use now
+		checkinDT = now
 	}
 
 	// Determine user's timezone and threshold
@@ -212,6 +229,19 @@ func submitCheckin(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to create check-in", Details: err.Error()})
 			return
 		}
+		oldCheckin := checkin // shallow copy before save
+		oldJSON, _ := json.Marshal(oldCheckin)
+		newJSON, _ := json.Marshal(checkin)
+		audit := models.AuditLog{
+			UserEmail:  GetUserEmail(c),
+			Action:     "user_checkin",
+			EntityID:   checkin.ID,
+			EntityType: "checkin",
+			OldValue:   string(oldJSON),
+			NewValue:   string(newJSON),
+			Timestamp:  time.Now(),
+		}
+		_ = db.DB.Create(&audit).Error // ignore error for now
 	} else {
 		if err := db.DB.Save(&checkin).Error; err != nil {
 			logger.Log.Error("Failed to update check-in",
@@ -511,6 +541,19 @@ func submitCheckout(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to record checkout", Details: err.Error()})
 		return
 	}
+	oldCheckin := checkin // shallow copy before save
+	oldJSON, _ := json.Marshal(oldCheckin)
+	newJSON, _ := json.Marshal(checkin)
+	audit := models.AuditLog{
+		UserEmail:  GetUserEmail(c),
+		Action:     "user_checkout",
+		EntityID:   checkin.ID,
+		EntityType: "checkin",
+		OldValue:   string(oldJSON),
+		NewValue:   string(newJSON),
+		Timestamp:  time.Now(),
+	}
+	_ = db.DB.Create(&audit).Error
 	resp := models.CheckinResponse{
 		ID:             checkin.ID,
 		UserID:         checkin.UserID,
