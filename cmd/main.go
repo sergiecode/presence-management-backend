@@ -117,12 +117,10 @@ func main() {
 
 	handlers.RegisterAuthRoutes(r)
 
-	// Open /api/users for dev bootstrap
-	handlers.RegisterUserRoutes(r.Group("/api/users"))
-
-	// All other /api endpoints require JWT
+	// All /api endpoints require JWT
 	auth := r.Group("/api")
 	auth.Use(jwtutil.JWTAuthMiddleware())
+	handlers.RegisterUserRoutes(auth.Group("/users"))
 	handlers.RegisterCheckinRoutes(auth.Group("/checkins"))
 	handlers.RegisterAbsenceRoutes(auth.Group("/absences"))
 	handlers.RegisterDashboardRoutes(auth.Group("/dashboard"))

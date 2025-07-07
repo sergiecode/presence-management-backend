@@ -20,7 +20,7 @@ func RegisterUserRoutes(r *gin.RouterGroup) {
 	r.PUT("/:id", updateUser)    // PUT /api/users/:id
 	r.DELETE("/:id", deleteUser) // DELETE /api/users/:id
 	r.PUT("/:id/checkin-config", updateUserCheckinConfig)
-	r.PUT("/users/:id/approve", approveUser)
+	r.PUT("/:id/approve", approveUser)
 	r.PUT("/:id/activate-email", activateUserEmail)
 }
 
