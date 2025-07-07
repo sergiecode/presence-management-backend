@@ -37,9 +37,9 @@ type Checkin struct {
 // LateReason is optional, only required if late
 // Time is optional, backend will set if not provided
 type CheckinRequest struct {
-	UserID         uint    `json:"user_id"`
-	Date           string  `json:"date" binding:"required,datetime=2006-01-02"`
-	Time           string  `json:"time,omitempty"` // still accept string for backward compatibility
+	UserID         uint    `json:"user_id,omitempty"` // Optional, extracted from JWT if not provided
+	Date           string  `json:"date,omitempty"`    // Optional, defaults to today
+	Time           string  `json:"time,omitempty"`    // Optional, defaults to now
 	LocationType   string  `json:"location_type" binding:"required,oneof=home office client temporary"`
 	LocationDetail string  `json:"location_detail,omitempty"`
 	GPSLat         float64 `json:"gps_lat,omitempty"`

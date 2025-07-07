@@ -42,9 +42,12 @@ func submitCheckin(c *gin.Context) {
 
 	var req models.CheckinRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("JSON binding error: %v", err)
 		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid request", Details: err.Error()})
 		return
 	}
+
+	log.Printf("Checkin request: %+v", req)
 	claims, ok := c.Get("user")
 	if !ok {
 		log.Println("No JWT claims found")
@@ -61,27 +64,36 @@ func submitCheckin(c *gin.Context) {
 		return
 	}
 
-	// Determine check-in time (UTC now or provided)
+	// Determine check-in date and time
 	now := time.Now().UTC()
 	var checkinDT time.Time
-	if req.Time != "" {
-		t, err := time.Parse(time.RFC3339, req.Time)
-		if err == nil {
-			checkinDT = t
-		} else {
-			checkinDateTimeStr := req.Date + "T" + req.Time
-			loc, err := time.LoadLocation(user.Timezone)
-			if err != nil {
-				loc = time.UTC
-			}
-			checkinDT, err = time.ParseInLocation("2006-01-02T15:04:05", checkinDateTimeStr, loc)
-			if err != nil {
-				c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid check-in time"})
-				return
+	var dateStr string
+
+	// Parse date - if not provided, use today
+	if req.Date != "" {
+		// Try multiple date formats
+		dateFormats := []string{
+			"2006-01-02",                   // YYYY-MM-DD
+			"2006-01-02 15:04:05-07:00",    // YYYY-MM-DD HH:MM:SS-TZ
+			"2006-01-02 15:04:05",          // YYYY-MM-DD HH:MM:SS
+			"Mon Jan 02 2006 15:04:05 MST", // JavaScript Date string
+		}
+
+		parsed := false
+		for _, format := range dateFormats {
+			if t, err := time.Parse(format, req.Date); err == nil {
+				dateStr = t.Format("2006-01-02")
+				parsed = true
+				break
 			}
 		}
+
+		if !parsed {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid date format. Use YYYY-MM-DD"})
+			return
+		}
 	} else {
-		checkinDT = now.In(time.UTC)
+		dateStr = now.Format("2006-01-02")
 	}
 
 	// Determine user's timezone and threshold
@@ -98,20 +110,47 @@ func submitCheckin(c *gin.Context) {
 		startTime = "09:00"
 	}
 
-	dateStr := checkinDT.In(loc).Format("2006-01-02")
+	log.Printf("User timezone: %s, check-in start time: %s", tz, startTime)
+
 	thresholdDT, err := time.ParseInLocation("2006-01-02T15:04", dateStr+"T"+startTime, loc)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Invalid check-in threshold config"})
 		return
 	}
 
+	// Convert check-in time to user's timezone for comparison
+	checkinInUserTZ := checkinDT.In(loc)
+
+	log.Printf("Check-in time: %s, Threshold: %s, Timezone: %s",
+		checkinInUserTZ.Format("2006-01-02 15:04:05"),
+		thresholdDT.Format("2006-01-02 15:04:05"),
+		tz)
+
 	late := false
-	if checkinDT.After(thresholdDT) {
+	if checkinInUserTZ.After(thresholdDT) {
 		late = true
+		log.Printf("Check-in is LATE! Check-in: %s, Threshold: %s",
+			checkinInUserTZ.Format("15:04:05"),
+			thresholdDT.Format("15:04:05"))
+
+		// Only require late_reason if the user explicitly provided it or if it's a significant delay
 		if req.LateReason == "" {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Late check-in requires a reason"})
-			return
+			// Calculate delay in minutes
+			delay := checkinInUserTZ.Sub(thresholdDT)
+			delayMinutes := int(delay.Minutes())
+
+			log.Printf("Delay: %d minutes", delayMinutes)
+
+			// Only require reason for delays > 15 minutes
+			if delayMinutes > 15 {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Late check-in requires a reason for delays over 15 minutes"})
+				return
+			}
 		}
+	} else {
+		log.Printf("Check-in is ON TIME! Check-in: %s, Threshold: %s",
+			checkinInUserTZ.Format("15:04:05"),
+			thresholdDT.Format("15:04:05"))
 	}
 
 	// Upsert: check if check-in exists for this user/date
