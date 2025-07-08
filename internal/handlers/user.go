@@ -392,7 +392,6 @@ func updateMyProfile(c *gin.Context) {
 
 	var req struct {
 		Picture               *string `json:"picture"`
-		Surname               *string `json:"surname"`
 		Phone                 *string `json:"phone"`
 		Timezone              *string `json:"timezone"`
 		CheckinStartTime      *string `json:"checkin_start_time"`
@@ -405,9 +404,6 @@ func updateMyProfile(c *gin.Context) {
 
 	if req.Picture != nil {
 		user.Picture = *req.Picture
-	}
-	if req.Surname != nil {
-		user.Surname = *req.Surname
 	}
 	if req.Phone != nil {
 		user.Phone = *req.Phone

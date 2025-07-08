@@ -67,6 +67,8 @@ func registerHandler(c *gin.Context) {
 	user := models.User{
 		Email:             req.Email,
 		Name:              req.Name,
+		Surname:           req.Surname,
+		Phone:             req.Phone,
 		PasswordHash:      string(hash),
 		EmailConfirmed:    false,
 		ConfirmationToken: token,
