@@ -143,31 +143,34 @@ func submitCheckin(c *gin.Context) {
 		thresholdDT.Format("2006-01-02 15:04:05"),
 		tz)
 
+	var absenceID *uint
 	late := false
+	delayMinutes := 0
 	if checkinInUserTZ.After(thresholdDT) {
-		late = true
-		log.Printf("Check-in is LATE! Check-in: %s, Threshold: %s",
-			checkinInUserTZ.Format("15:04:05"),
-			thresholdDT.Format("15:04:05"))
-
-		// Only require late_reason if the user explicitly provided it or if it's a significant delay
-		if req.LateReason == "" {
-			// Calculate delay in minutes
-			delay := checkinInUserTZ.Sub(thresholdDT)
-			delayMinutes := int(delay.Minutes())
-
-			log.Printf("Delay: %d minutes", delayMinutes)
-
-			// Only require reason for delays > 15 minutes
-			if delayMinutes > 15 {
+		delay := checkinInUserTZ.Sub(thresholdDT)
+		delayMinutes = int(delay.Minutes())
+		if delayMinutes > 15 {
+			late = true
+			if req.LateReason == "" {
 				c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Late check-in requires a reason for delays over 15 minutes"})
 				return
 			}
+			var absence models.Absence
+			absenceErr := db.DB.Where("user_id = ? AND date = ?", user.ID, dateStr).First(&absence).Error
+			if absenceErr != nil {
+				absence = models.Absence{
+					UserID: user.ID,
+					Date:   dateStr,
+					Type:   "late",
+					Reason: req.LateReason,
+				}
+				if err := db.DB.Create(&absence).Error; err == nil {
+					absenceID = &absence.ID
+				}
+			} else {
+				absenceID = &absence.ID
+			}
 		}
-	} else {
-		log.Printf("Check-in is ON TIME! Check-in: %s, Threshold: %s",
-			checkinInUserTZ.Format("15:04:05"),
-			thresholdDT.Format("15:04:05"))
 	}
 
 	// Upsert: check if check-in exists for this user/date
@@ -222,6 +225,8 @@ func submitCheckin(c *gin.Context) {
 			checkin.AbsenceID = &absence.ID
 		}
 	}
+
+	checkin.AbsenceID = absenceID
 
 	// Save checkin (create or update)
 	if checkin.ID == 0 {
@@ -298,10 +303,9 @@ func getCheckinHistory(c *gin.Context) {
 	}
 	resp := make([]models.CheckinResponse, len(checkins))
 	for i, ch := range checkins {
-		var checkoutTime *string
+		var checkoutTime *time.Time
 		if ch.CheckoutTime != nil {
-			ts := ch.CheckoutTime.Format(time.RFC3339)
-			checkoutTime = &ts
+			checkoutTime = ch.CheckoutTime
 		}
 		resp[i] = models.CheckinResponse{
 			ID:             ch.ID,
@@ -348,10 +352,9 @@ func getTodayCheckin(c *gin.Context) {
 		c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "No check-in for today"})
 		return
 	}
-	var checkoutTime *string
+	var checkoutTime *time.Time
 	if checkin.CheckoutTime != nil {
-		ts := checkin.CheckoutTime.Format(time.RFC3339)
-		checkoutTime = &ts
+		checkoutTime = checkin.CheckoutTime
 	}
 	resp := models.CheckinResponse{
 		ID:             checkin.ID,
@@ -432,10 +435,9 @@ func listAllCheckins(c *gin.Context) {
 	q.Find(&checkins)
 	resp := make([]models.CheckinResponse, len(checkins))
 	for i, ch := range checkins {
-		var checkoutTime *string
+		var checkoutTime *time.Time
 		if ch.CheckoutTime != nil {
-			ts := ch.CheckoutTime.Format(time.RFC3339)
-			checkoutTime = &ts
+			checkoutTime = ch.CheckoutTime
 		}
 		resp[i] = models.CheckinResponse{
 			ID:             ch.ID,
@@ -517,24 +519,32 @@ func submitCheckout(c *gin.Context) {
 	}
 	userClaims := claims.(jwt.MapClaims)
 	userID, _ := userClaims["user_id"].(float64)
-	// Find today's check-in
-	today := time.Now().Format("2006-01-02")
 	var checkin models.Checkin
-	err := db.DB.Where("user_id = ? AND date = ?", uint(userID), today).First(&checkin).Error
+	// Find the latest check-in for the user that doesn't have a checkout yet
+	err := db.DB.Where("user_id = ? AND checkout_time IS NULL", userID).Order("time desc").First(&checkin).Error
 	if err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "No check-in found for today. You must check in before checking out."})
 		return
 	}
-	if checkin.CheckoutTime != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Already checked out for today."})
-		return
+
+	var checkoutTime time.Time
+	if req.CheckoutTime != "" {
+		t, err := time.Parse(time.RFC3339, req.CheckoutTime)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid checkout_time format (must be RFC3339)"})
+			return
+		}
+		checkoutTime = t
+	} else {
+		checkoutTime = time.Now().UTC()
 	}
-	now := time.Now().UTC()
-	if now.Before(checkin.Time) {
+
+	if checkoutTime.Before(checkin.Time) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Checkout time cannot be before check-in time."})
 		return
 	}
-	checkin.CheckoutTime = &now
+
+	checkin.CheckoutTime = &checkoutTime
 	checkin.CheckoutStatus = req.Status
 	checkin.Overtime = req.Overtime
 	if err := db.DB.Save(&checkin).Error; err != nil {
@@ -567,6 +577,9 @@ func submitCheckout(c *gin.Context) {
 		Late:           checkin.Late,
 		LateReason:     checkin.LateReason,
 		CreatedAt:      checkin.CreatedAt.Format(time.RFC3339),
+		CheckoutTime:   checkin.CheckoutTime,
+		CheckoutStatus: checkin.CheckoutStatus,
+		Overtime:       checkin.Overtime,
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -634,10 +647,9 @@ func updateCheckoutForHR(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to update checkout", Details: err.Error()})
 		return
 	}
-	var checkoutTime *string
+	var checkoutTime *time.Time
 	if checkin.CheckoutTime != nil {
-		ts := checkin.CheckoutTime.Format(time.RFC3339)
-		checkoutTime = &ts
+		checkoutTime = checkin.CheckoutTime
 	}
 	resp := models.CheckinResponse{
 		ID:             checkin.ID,

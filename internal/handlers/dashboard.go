@@ -469,7 +469,12 @@ func getAttendance(c *gin.Context) {
 		status := "absent"
 		var checkin *models.CheckinResponse
 		var absence *models.AbsenceResponse
+		var checkoutTime *time.Time
 		if r.CheckinID != nil {
+			checkoutTime = nil // Initialize to nil
+			if r.CheckoutTime != nil {
+				checkoutTime = r.CheckoutTime
+			}
 			checkin = &models.CheckinResponse{
 				ID:             *r.CheckinID,
 				UserID:         r.UserID,
@@ -483,13 +488,17 @@ func getAttendance(c *gin.Context) {
 				Late:           derefBool(r.Late),
 				LateReason:     derefString(r.LateReason),
 				CreatedAt:      r.CheckinCreatedAt.Format("2006-01-02 15:04:05"),
+				CheckoutTime:   checkoutTime,
+				CheckoutStatus: derefString(r.CheckoutStatus),
+				Overtime:       derefBool(r.Overtime),
 			}
 			if r.Late != nil && *r.Late {
 				status = "late"
 			} else {
 				status = "present"
 			}
-		} else if r.AbsenceID != nil {
+		}
+		if r.AbsenceID != nil {
 			absence = &models.AbsenceResponse{
 				ID:        *r.AbsenceID,
 				UserID:    r.UserID,
@@ -499,10 +508,9 @@ func getAttendance(c *gin.Context) {
 				FileURL:   derefString(r.FileURL),
 				CreatedAt: r.AbsenceCreatedAt.Format("2006-01-02 15:04:05"),
 			}
+			// Optionally, override status if medical
 			if r.AbsenceType != nil && *r.AbsenceType == "medical" {
 				status = "medical"
-			} else {
-				status = "absent"
 			}
 		}
 		row := map[string]interface{}{

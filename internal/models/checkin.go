@@ -52,22 +52,22 @@ type CheckinRequest struct {
 // Mirrors the Checkin model, but can be extended for extra info
 // (e.g., user info, status, etc.)
 type CheckinResponse struct {
-	ID             uint    `json:"id"`
-	UserID         uint    `json:"user_id"`
-	Date           string  `json:"date"`
-	Time           string  `json:"time"` // return as RFC3339 string for API clients
-	LocationType   string  `json:"location_type"`
-	LocationDetail string  `json:"location_detail,omitempty"`
-	GPSLat         float64 `json:"gps_lat,omitempty"`
-	GPSLong        float64 `json:"gps_long,omitempty"`
-	Notes          string  `json:"notes,omitempty"`
-	Late           bool    `json:"late"`
-	LateReason     string  `json:"late_reason,omitempty"`
-	CreatedAt      string  `json:"created_at"`
-	CheckoutTime   *string `json:"checkout_time,omitempty"`
-	CheckoutStatus string  `json:"checkout_status,omitempty"`
-	Overtime       bool    `json:"overtime,omitempty"`
-	AbsenceID      *uint   `json:"absence_id,omitempty"`
+	ID             uint       `json:"id"`
+	UserID         uint       `json:"user_id"`
+	Date           string     `json:"date"`
+	Time           string     `json:"time"` // return as RFC3339 string for API clients
+	LocationType   string     `json:"location_type"`
+	LocationDetail string     `json:"location_detail,omitempty"`
+	GPSLat         float64    `json:"gps_lat,omitempty"`
+	GPSLong        float64    `json:"gps_long,omitempty"`
+	Notes          string     `json:"notes,omitempty"`
+	Late           bool       `json:"late"`
+	LateReason     string     `json:"late_reason,omitempty"`
+	CreatedAt      string     `json:"created_at"`
+	CheckoutTime   *time.Time `json:"checkout_time,omitempty"`
+	CheckoutStatus string     `json:"checkout_status,omitempty"`
+	Overtime       bool       `json:"overtime,omitempty"`
+	AbsenceID      *uint      `json:"absence_id,omitempty"`
 }
 
 // CheckinConfigRequest is what the mobile app sends
@@ -101,8 +101,9 @@ func (Checkin) TableName() string {
 
 // For /checkins/checkout (user checkout)
 type CheckoutRequest struct {
-	Status   string `json:"status"`
-	Overtime bool   `json:"overtime"`
+	Status       string `json:"status"`
+	Overtime     bool   `json:"overtime"`
+	CheckoutTime string `json:"checkout_time,omitempty"` // RFC3339, optional
 }
 
 // For /checkins/checkout/:id (HR/admin update)
