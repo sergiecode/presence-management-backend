@@ -518,6 +518,10 @@ func submitCheckout(c *gin.Context) {
 		return
 	}
 	userClaims := claims.(jwt.MapClaims)
+	user := models.User{
+		ID: userClaims["user_id"].(uint),
+	}
+	db.DB.First(&user)
 	userID, _ := userClaims["user_id"].(float64)
 	var checkin models.Checkin
 	// Find the latest check-in for the user that doesn't have a checkout yet
@@ -539,13 +543,29 @@ func submitCheckout(c *gin.Context) {
 		checkoutTime = time.Now().UTC()
 	}
 
+	endTime := user.CheckoutEndTime
+	if endTime == "" {
+		endTime = "17:00"
+	}
+	loc, err := time.LoadLocation(user.Timezone)
+	if err != nil || user.Timezone == "" {
+		loc = time.UTC
+	}
+	expectedEnd, _ := time.ParseInLocation("2006-01-02T15:04", checkin.Date+"T"+endTime, loc)
+	if checkoutTime.Before(expectedEnd) {
+		if req.Status == "" {
+			c.JSON(400, models.ErrorResponse{Error: "Early checkout requires a reason"})
+			return
+		}
+		checkin.CheckoutStatus = req.Status
+	}
+
 	if checkoutTime.Before(checkin.Time) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Checkout time cannot be before check-in time."})
 		return
 	}
 
 	checkin.CheckoutTime = &checkoutTime
-	checkin.CheckoutStatus = req.Status
 	checkin.Overtime = req.Overtime
 	if err := db.DB.Save(&checkin).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to record checkout", Details: err.Error()})

@@ -30,6 +30,7 @@ type User struct {
 	ResetTokenExpiry      time.Time `json:"-" gorm:"type:timestamp"`
 	Surname               string    `json:"surname"`
 	Phone                 string    `json:"phone"`
+	CheckoutEndTime       string    `json:"checkout_end_time" gorm:"type:varchar(8);default:''"`
 }
 
 type RefreshToken struct {

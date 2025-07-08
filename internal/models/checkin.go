@@ -78,6 +78,7 @@ type CheckinConfigRequest struct {
 	CheckinStartTime      string `json:"checkin_start_time"`
 	Timezone              string `json:"timezone"`
 	NotificationOffsetMin int    `json:"notification_offset_min"`
+	CheckoutEndTime       string `json:"checkout_end_time"`
 }
 
 // DailySummary matches the daily_summary table for reporting/aggregation
