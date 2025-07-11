@@ -108,6 +108,8 @@ definitions:
     properties:
       checkin_start_time:
         type: string
+      checkout_end_time:
+        type: string
       notification_offset_min:
         type: integer
       timezone:
@@ -116,6 +118,7 @@ definitions:
   models.CheckinRequest:
     properties:
       date:
+        description: Optional, defaults to today
         type: string
       gps_lat:
         type: number
@@ -135,12 +138,12 @@ definitions:
       notes:
         type: string
       time:
-        description: still accept string for backward compatibility
+        description: Optional, defaults to now
         type: string
       user_id:
+        description: Optional, extracted from JWT if not provided
         type: integer
     required:
-    - date
     - location_type
     type: object
   models.CheckinResponse:
@@ -181,6 +184,9 @@ definitions:
     type: object
   models.CheckoutRequest:
     properties:
+      checkout_time:
+        description: RFC3339, optional
+        type: string
       overtime:
         type: boolean
       status:
@@ -310,6 +316,8 @@ definitions:
   models.User:
     properties:
       checkin_start_time:
+        type: string
+      checkout_end_time:
         type: string
       deactivated:
         type: boolean

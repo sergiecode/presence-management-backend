@@ -2298,6 +2298,9 @@
                 "checkin_start_time": {
                     "type": "string"
                 },
+                "checkout_end_time": {
+                    "type": "string"
+                },
                 "notification_offset_min": {
                     "type": "integer"
                 },
@@ -2309,11 +2312,11 @@
         "models.CheckinRequest": {
             "type": "object",
             "required": [
-                "date",
                 "location_type"
             ],
             "properties": {
                 "date": {
+                    "description": "Optional, defaults to today",
                     "type": "string"
                 },
                 "gps_lat": {
@@ -2341,10 +2344,11 @@
                     "type": "string"
                 },
                 "time": {
-                    "description": "still accept string for backward compatibility",
+                    "description": "Optional, defaults to now",
                     "type": "string"
                 },
                 "user_id": {
+                    "description": "Optional, extracted from JWT if not provided",
                     "type": "integer"
                 }
             }
@@ -2406,6 +2410,10 @@
         "models.CheckoutRequest": {
             "type": "object",
             "properties": {
+                "checkout_time": {
+                    "description": "RFC3339, optional",
+                    "type": "string"
+                },
                 "overtime": {
                     "type": "boolean"
                 },
@@ -2598,6 +2606,9 @@
             "type": "object",
             "properties": {
                 "checkin_start_time": {
+                    "type": "string"
+                },
+                "checkout_end_time": {
                     "type": "string"
                 },
                 "deactivated": {

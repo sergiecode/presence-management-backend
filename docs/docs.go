@@ -2309,6 +2309,9 @@ const docTemplate = `{
                 "checkin_start_time": {
                     "type": "string"
                 },
+                "checkout_end_time": {
+                    "type": "string"
+                },
                 "notification_offset_min": {
                     "type": "integer"
                 },
@@ -2320,11 +2323,11 @@ const docTemplate = `{
         "models.CheckinRequest": {
             "type": "object",
             "required": [
-                "date",
                 "location_type"
             ],
             "properties": {
                 "date": {
+                    "description": "Optional, defaults to today",
                     "type": "string"
                 },
                 "gps_lat": {
@@ -2352,10 +2355,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "time": {
-                    "description": "still accept string for backward compatibility",
+                    "description": "Optional, defaults to now",
                     "type": "string"
                 },
                 "user_id": {
+                    "description": "Optional, extracted from JWT if not provided",
                     "type": "integer"
                 }
             }
@@ -2417,6 +2421,10 @@ const docTemplate = `{
         "models.CheckoutRequest": {
             "type": "object",
             "properties": {
+                "checkout_time": {
+                    "description": "RFC3339, optional",
+                    "type": "string"
+                },
                 "overtime": {
                     "type": "boolean"
                 },
@@ -2611,6 +2619,9 @@ const docTemplate = `{
                 "checkin_start_time": {
                     "type": "string"
                 },
+                "checkout_end_time": {
+                    "type": "string"
+                },
                 "deactivated": {
                     "type": "boolean"
                 },
@@ -2656,10 +2667,10 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.0.1",
+	Version:          "0.0.2",
 	Host:             "",
 	BasePath:         "",
-	Schemes:          []string{},
+	Schemes:          []string{"http", "https"},
 	Title:            "Absti ClockIn API",
 	Description:      "API for Absti ClockIn",
 	InfoInstanceName: "swagger",
