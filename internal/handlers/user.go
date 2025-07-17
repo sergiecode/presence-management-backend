@@ -12,15 +12,23 @@ import (
 	"go.uber.org/zap"
 )
 
+// USER ROUTES - User profile and management
 func RegisterUserRoutes(r *gin.RouterGroup) {
+	// Current user operations
 	r.GET("/me", getMe)
-	r.PATCH("/me", updateMyProfile) //PATCH BECAUSE PARTIAL UPDATE
-	// Admin-only endpoints
-	r.GET("/", listUsers)        // GET /api/users
-	r.GET("/:id", getUserByID)   // GET /api/users/:id
-	r.PUT("/:id", updateUser)    // PUT /api/users/:id
-	r.DELETE("/:id", deleteUser) // DELETE /api/users/:id
+	r.PATCH("/me", updateMyProfile)             // PATCH for partial updates
+	
+	// Admin user management
+	r.GET("/", listUsers)                       // GET /api/users
+	r.GET("/:id", getUserByID)                  // GET /api/users/:id
+	r.PUT("/:id", updateUser)                   // PUT /api/users/:id (full update)
+	r.DELETE("/:id", deleteUser)                // DELETE /api/users/:id
+	
+	// Admin user configuration
 	r.PUT("/:id/checkin-config", updateUserCheckinConfig)
+	r.PUT("/:id/hr-details", updateUserHRDetails)
+	
+	// Admin user status management
 	r.PUT("/:id/approve", approveUser)
 	r.PUT("/:id/activate-email", activateUserEmail)
 }
@@ -31,18 +39,18 @@ func RegisterUserRoutes(r *gin.RouterGroup) {
 // @Tags users
 // @Produce json
 // @Success 200 {object} models.User
-// @Failure 401 {object} gin.H
+// @Failure 401 {object} models.ErrorResponse
 // @Router /api/users/me [get]
 func getMe(c *gin.Context) {
 	claims, ok := c.Get("user")
 	if !ok {
-		c.JSON(401, gin.H{"error": "Unauthorized"})
+		c.JSON(401, models.ErrorResponse{Error: "Unauthorized"})
 		return
 	}
 	userClaims := claims.(jwt.MapClaims)
 	email, ok := userClaims["email"].(string)
 	if !ok {
-		c.JSON(401, gin.H{"error": "Invalid token"})
+		c.JSON(401, models.ErrorResponse{Error: "Invalid token"})
 		return
 	}
 	var user models.User
@@ -60,14 +68,17 @@ func getMe(c *gin.Context) {
 }
 
 // @Summary List all users
-// @Description Admin only. Returns paginated list of users. Query params: page, page_size
+// @Description Admin only. Returns paginated list of users. Query params: page, page_size, team, role, on_site_required
 // @Tags users
 // @Produce json
 // @Param page query int false "Page number (default 1)"
 // @Param page_size query int false "Page size (default 20)"
+// @Param team query string false "Filter by team"
+// @Param role query string false "Filter by role"
+// @Param on_site_required query bool false "Filter by on-site requirement"
 // @Success 200 {object} []models.User
-// @Failure 401 {object} gin.H
-// @Failure 403 {object} gin.H
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
 // @Router /api/users [get]
 func listUsers(c *gin.Context) {
 	claims, ok := c.Get("user")
@@ -95,9 +106,22 @@ func listUsers(c *gin.Context) {
 			pageSize = 20
 		}
 	}
+	
+	query := db.DB.Where("deactivated = ? OR pending_approval = ?", false, true)
+	
+	// Apply filters
+	if team := c.Query("team"); team != "" {
+		query = query.Where("team = ?", team)
+	}
+	if roleFilter := c.Query("role"); roleFilter != "" {
+		query = query.Where("role = ?", roleFilter)
+	}
+	if onSiteRequired := c.Query("on_site_required"); onSiteRequired != "" {
+		query = query.Where("on_site_required = ?", onSiteRequired == "true")
+	}
+	
 	var users []models.User
-	db.DB.Where("deactivated = ? OR pending_approval = ?", false, true).
-		Offset((page - 1) * pageSize).Limit(pageSize).Find(&users)
+	query.Offset((page - 1) * pageSize).Limit(pageSize).Find(&users)
 	c.JSON(200, users)
 }
 
@@ -107,9 +131,9 @@ func listUsers(c *gin.Context) {
 // @Produce json
 // @Param id path int true "User ID"
 // @Success 200 {object} models.User
-// @Failure 401 {object} gin.H
-// @Failure 403 {object} gin.H
-// @Failure 404 {object} gin.H
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
 // @Router /api/users/{id} [get]
 func getUserByID(c *gin.Context) {
 	claims, ok := c.Get("user")
@@ -146,10 +170,10 @@ func getUserByID(c *gin.Context) {
 // @Param id path int true "User ID"
 // @Param user body models.User true "User data"
 // @Success 200 {object} models.User
-// @Failure 400 {object} gin.H
-// @Failure 401 {object} gin.H
-// @Failure 403 {object} gin.H
-// @Failure 404 {object} gin.H
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
 // @Router /api/users/{id} [put]
 func updateUser(c *gin.Context) {
 	claims, ok := c.Get("user")
@@ -195,6 +219,43 @@ func updateUser(c *gin.Context) {
 	if req.NotificationOffsetMin > 0 {
 		user.NotificationOffsetMin = req.NotificationOffsetMin
 	}
+	// Handle new HR fields
+	if req.DNI != "" {
+		user.DNI = req.DNI
+	}
+	if req.CUIL != "" {
+		user.CUIL = req.CUIL
+	}
+	if req.BirthDate != nil {
+		user.BirthDate = req.BirthDate
+	}
+	if req.HireDate != nil {
+		user.HireDate = req.HireDate
+	}
+	if req.Location != (models.Location{}) {
+		user.Location = req.Location
+	}
+	if req.WeeklyHours > 0 {
+		user.WeeklyHours = req.WeeklyHours
+	}
+	if req.Notes != "" {
+		user.Notes = req.Notes
+	}
+	if req.Team != "" {
+		user.Team = req.Team
+	}
+	user.ZohoAccess = req.ZohoAccess
+	user.TeamsAccess = req.TeamsAccess
+	user.OnSiteRequired = req.OnSiteRequired
+	if req.WeeklyObjectiveDays > 0 {
+		user.WeeklyObjectiveDays = req.WeeklyObjectiveDays
+	}
+	if req.MonthlyObjectiveDays > 0 {
+		user.MonthlyObjectiveDays = req.MonthlyObjectiveDays
+	}
+	if req.OfficeDays != "" {
+		user.OfficeDays = req.OfficeDays
+	}
 	if err := db.DB.Save(&user).Error; err != nil {
 		logger.Log.Error("Failed to update user",
 			zap.String("endpoint", c.FullPath()),
@@ -214,10 +275,10 @@ func updateUser(c *gin.Context) {
 // @Tags users
 // @Produce json
 // @Param id path int true "User ID"
-// @Success 200 {object} gin.H
-// @Failure 401 {object} gin.H
-// @Failure 403 {object} gin.H
-// @Failure 404 {object} gin.H
+// @Success 200 {object} models.SimpleResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
 // @Router /api/users/{id} [delete]
 func deleteUser(c *gin.Context) {
 	claims, ok := c.Get("user")
@@ -253,10 +314,10 @@ func deleteUser(c *gin.Context) {
 // @Param id path int true "User ID"
 // @Param config body models.CheckinConfigRequest true "Check-in config"
 // @Success 200 {object} models.User
-// @Failure 400 {object} gin.H
-// @Failure 401 {object} gin.H
-// @Failure 403 {object} gin.H
-// @Failure 404 {object} gin.H
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
 // @Router /api/users/{id}/checkin-config [put]
 func updateUserCheckinConfig(c *gin.Context) {
 	claims, ok := c.Get("user")
@@ -305,10 +366,10 @@ func updateUserCheckinConfig(c *gin.Context) {
 // @Tags users
 // @Produce json
 // @Param id path int true "User ID"
-// @Success 200 {object} gin.H
-// @Failure 401 {object} gin.H
-// @Failure 403 {object} gin.H
-// @Failure 404 {object} gin.H
+// @Success 200 {object} models.SimpleResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
 // @Router /api/users/{id}/approve [put]
 func approveUser(c *gin.Context) {
 	claims, ok := c.Get("user")
@@ -343,10 +404,10 @@ func approveUser(c *gin.Context) {
 // @Tags users
 // @Produce json
 // @Param id path int true "User ID"
-// @Success 200 {object} gin.H
-// @Failure 401 {object} gin.H
-// @Failure 403 {object} gin.H
-// @Failure 404 {object} gin.H
+// @Success 200 {object} models.SimpleResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
 // @Router /api/users/{id}/activate-email [put]
 func activateUserEmail(c *gin.Context) {
 	claims, ok := c.Get("user")
@@ -372,6 +433,95 @@ func activateUserEmail(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"message": "User email activated"})
+}
+
+// @Summary Update user HR details
+// @Description HR/admin can update additional user fields from Excel files (DNI, CUIL, birth date, hire date, location, etc.). JWT with hr/admin required.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param id path int true "User ID"
+// @Param details body models.UserHRDetailsRequest true "HR details"
+// @Success 200 {object} models.User
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/users/{id}/hr-details [put]
+func updateUserHRDetails(c *gin.Context) {
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(401, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userClaims := claims.(jwt.MapClaims)
+	role, _ := userClaims["role"].(string)
+	if role != "hr" && role != "admin" {
+		c.JSON(403, gin.H{"error": "Forbidden: HR or admin only"})
+		return
+	}
+	id := c.Param("id")
+	var user models.User
+	if err := db.DB.First(&user, id).Error; err != nil || user.Deactivated {
+		c.JSON(404, gin.H{"error": "User not found"})
+		return
+	}
+	var req models.UserHRDetailsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid request", "details": err.Error()})
+		return
+	}
+	
+	// Update fields if provided
+	if req.DNI != "" {
+		user.DNI = req.DNI
+	}
+	if req.CUIL != "" {
+		user.CUIL = req.CUIL
+	}
+	if req.BirthDate != nil {
+		user.BirthDate = req.BirthDate
+	}
+	if req.HireDate != nil {
+		user.HireDate = req.HireDate
+	}
+	if req.Location != (models.Location{}) {
+		user.Location = req.Location
+	}
+	if req.WeeklyHours > 0 {
+		user.WeeklyHours = req.WeeklyHours
+	}
+	if req.Notes != "" {
+		user.Notes = req.Notes
+	}
+	if req.Team != "" {
+		user.Team = req.Team
+	}
+	user.ZohoAccess = req.ZohoAccess
+	user.TeamsAccess = req.TeamsAccess
+	user.OnSiteRequired = req.OnSiteRequired
+	if req.WeeklyObjectiveDays > 0 {
+		user.WeeklyObjectiveDays = req.WeeklyObjectiveDays
+	}
+	if req.MonthlyObjectiveDays > 0 {
+		user.MonthlyObjectiveDays = req.MonthlyObjectiveDays
+	}
+	if req.OfficeDays != "" {
+		user.OfficeDays = req.OfficeDays
+	}
+	
+	if err := db.DB.Save(&user).Error; err != nil {
+		logger.Log.Error("Failed to update user HR details",
+			zap.String("endpoint", c.FullPath()),
+			zap.String("method", c.Request.Method),
+			zap.String("user", getUserEmail(c)),
+			zap.Any("payload", req),
+			zap.Error(err),
+		)
+		c.JSON(500, gin.H{"error": "Failed to update user HR details", "details": err.Error()})
+		return
+	}
+	c.JSON(200, user)
 }
 
 // PATCH /api/users/me

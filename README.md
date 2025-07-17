@@ -105,10 +105,11 @@ El backend expone una API REST (con JWT) para:
 - Registro, login, logout, refrescar JWT
 - Admin: listar, crear, actualizar, desactivar usuarios
 - HR/Admin: aprobar usuarios, configurar horario y zona horaria de check-in
+- HR/Admin: gestionar detalles adicionales (DNI, CUIL, fecha nacimiento, fecha ingreso, ubicación, equipo, acceso a sistemas, etc.)
 
 ### 2. Check-in/Check-out
 
-- Empleados: registrar check-in diario (ubicación, hora, notas, GPS o Ubicaciones Pre definidas, motivo de tardanza)
+- Empleados: registrar check-in diario (ubicación, hora, notas o Ubicaciones Pre definidas, motivo de tardanza)
 - Empleados: registrar check-out diario (fin de día, horas extra, estado)
 - HR/Admin: ver todos los check-ins, editar/borrar, aprobar en lote
 
@@ -121,7 +122,9 @@ El backend expone una API REST (con JWT) para:
 
 - HR/Admin: estadísticas de asistencia (% a tiempo, % tarde, horas extra)
 - HR/Admin: estadísticas de ausencias, usuarios, logs de auditoría
-- HR/Admin: exportar check-ins a Excel, ver resúmenes diarios, pase de lista
+- HR/Admin: exportar check-ins a Excel en formato ART, ver resúmenes diarios, pase de lista
+- HR/Admin: exportar pase de lista de asistencia en formato ART con todos los campos HR
+- HR/Admin: estadísticas por equipo, acceso a sistemas, usuarios por ubicación
 
 ### 5. Seguridad
 

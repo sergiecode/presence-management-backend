@@ -12,8 +12,6 @@ SELECT
     c.overtime,
     c.location_type,
     c.location_detail,
-    c.gps_lat,
-    c.gps_long,
     c.notes,
     c.checkout_status
 FROM checkins c

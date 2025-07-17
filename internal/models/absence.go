@@ -2,37 +2,63 @@ package models
 
 import "time"
 
+type AbsenceType int
+
+const (
+	AbsenceLicenciaMaternidad         AbsenceType = 1
+	AbsenceLicenciaEnfermedad         AbsenceType = 2
+	AbsenceAusenteEnfermedad          AbsenceType = 3
+	AbsenceAusenteEnfermedadFamiliar  AbsenceType = 4
+	AbsenceAusenteEstudio             AbsenceType = 5
+	AbsenceAusenteDuelo               AbsenceType = 6
+	AbsenceDiaMudanza                 AbsenceType = 7
+	AbsenceVacaciones                 AbsenceType = 8
+	// Keep the old types for backward compatibility
+	AbsenceLate                       AbsenceType = 9
+	AbsenceMedical                    AbsenceType = 10
+	AbsenceGeneral                    AbsenceType = 11
+)
+
 type Absence struct {
-	ID        uint      `json:"id" gorm:"primaryKey"`
-	UserID    uint      `json:"user_id" gorm:"index"`
-	Date      string    `json:"date" gorm:"type:date;index"`  // YYYY-MM-DD
-	Type      string    `json:"type" gorm:"type:varchar(20)"` // absence/late/medical
-	Reason    string    `json:"reason"`
-	FileURL   string    `json:"file_url,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Locked    bool      `json:"locked" gorm:"default:false"`
-	Deleted   bool      `json:"deleted" gorm:"default:false"`
+	ID        uint        `json:"id" gorm:"primaryKey"`
+	UserID    uint        `json:"user_id" gorm:"index"`
+	Date      string      `json:"date" gorm:"type:date;index"`  // YYYY-MM-DD
+	Type      AbsenceType `json:"type" gorm:"type:int"` // Using the enum
+	Reason    string      `json:"reason"`
+	FileURL   string      `json:"file_url,omitempty"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
+	Locked    bool        `json:"locked" gorm:"default:false"`
+	Deleted   bool        `json:"deleted" gorm:"default:false"`
 }
 
 type AbsenceRequest struct {
-	Date   string `json:"date" binding:"required,datetime=2006-01-02"`
-	Type   string `json:"type" binding:"required,oneof=absence late medical"`
-	Reason string `json:"reason" binding:"required"`
+	Date   string      `json:"date" binding:"required,datetime=2006-01-02"`
+	Type   AbsenceType `json:"type" binding:"required"`
+	Reason string      `json:"reason" binding:"required"`
 }
 
 type AbsenceResponse struct {
-	ID        uint   `json:"id"`
-	UserID    uint   `json:"user_id"`
-	Date      string `json:"date"`
-	Type      string `json:"type"`
-	Reason    string `json:"reason"`
-	FileURL   string `json:"file_url,omitempty"`
-	CreatedAt string `json:"created_at"`
+	ID        uint        `json:"id"`
+	UserID    uint        `json:"user_id"`
+	Date      string      `json:"date"`
+	Type      AbsenceType `json:"type"`
+	Reason    string      `json:"reason"`
+	FileURL   string      `json:"file_url,omitempty"`
+	CreatedAt string      `json:"created_at"`
 }
 
 type LockAbsenceRequest struct {
 	Locked bool `json:"locked"`
+}
+
+// SimpleResponse is used for simple success/error responses
+type SimpleResponse struct {
+	Message string `json:"message,omitempty"`
+	Error   string `json:"error,omitempty"`
+	Success bool   `json:"success,omitempty"`
+	Processed int  `json:"processed,omitempty"`
+	Failed   int  `json:"failed,omitempty"`
 }
 
 type RegisterRequest struct {
@@ -41,6 +67,8 @@ type RegisterRequest struct {
 	Name     string `json:"name" example:"John"`
 	Surname  string `json:"surname" example:"Doe"`
 	Phone    string `json:"phone" example:"+123456789"`
+	// Note: Additional fields like DNI, CUIL, BirthDate, HireDate, Location, etc.
+	// are optional and will be filled by HR in the dashboard
 }
 
 type LoginRequest struct {
@@ -84,4 +112,68 @@ type ResendConfirmationRequest struct {
 // { "refresh_token": "..." }
 type LogoutRequest struct {
 	RefreshToken string `json:"refresh_token"`
+}
+
+// UserHRDetailsRequest is used for HR to update additional user fields from Excel files
+type UserHRDetailsRequest struct {
+	DNI                  string     `json:"dni,omitempty"`
+	CUIL                 string     `json:"cuil,omitempty"`
+	BirthDate            *time.Time `json:"birth_date,omitempty"`
+	HireDate             *time.Time `json:"hire_date,omitempty"`
+	Location             Location   `json:"location,omitempty"`
+	WeeklyHours          int        `json:"weekly_hours,omitempty"`
+	Notes                string     `json:"notes,omitempty"`
+	Team                 string     `json:"team,omitempty"`
+	ZohoAccess           bool       `json:"zoho_access,omitempty"`
+	TeamsAccess          bool       `json:"teams_access,omitempty"`
+	OnSiteRequired       bool       `json:"on_site_required,omitempty"`
+	WeeklyObjectiveDays  int        `json:"weekly_objective_days,omitempty"`
+	MonthlyObjectiveDays int        `json:"monthly_objective_days,omitempty"`
+	OfficeDays           string     `json:"office_days,omitempty"`
+}
+
+// GetAbsenceTypeText returns the display text for an absence type ID
+func (at AbsenceType) GetText() string {
+	switch at {
+	case AbsenceLicenciaMaternidad:
+		return "Licencia por maternidad"
+	case AbsenceLicenciaEnfermedad:
+		return "Licencia por enfermedad"
+	case AbsenceAusenteEnfermedad:
+		return "Ausente por enfermedad"
+	case AbsenceAusenteEnfermedadFamiliar:
+		return "Ausente por enfermedad familiar"
+	case AbsenceAusenteEstudio:
+		return "Ausente por día de estudio/examen"
+	case AbsenceAusenteDuelo:
+		return "Ausente por duelo"
+	case AbsenceDiaMudanza:
+		return "Día por mudanza"
+	case AbsenceVacaciones:
+		return "Vacaciones"
+	case AbsenceLate:
+		return "Tarde"
+	case AbsenceMedical:
+		return "Médico"
+	case AbsenceGeneral:
+		return "Ausencia"
+	default:
+		return "Desconocido"
+	}
+}
+
+// GetLocationTypeText returns the display text for a location type ID
+func (lt LocationType) GetText() string {
+	switch lt {
+	case LocationDomicilioRemotoDeclarado:
+		return "Domicilio remoto declarado"
+	case LocationDomicilioRemotoAlternativo:
+		return "Domicilio remoto alternativo"
+	case LocationDomicilioCliente:
+		return "Domicilio del cliente"
+	case LocationOficinaABSTI:
+		return "Oficina de ABSTI"
+	default:
+		return "Desconocido"
+	}
 }

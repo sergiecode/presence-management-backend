@@ -13,8 +13,6 @@ type Checkin struct {
 	Time           time.Time  `json:"time" gorm:"type:timestamp with time zone"` // precise check-in time
 	LocationType   string     `json:"location_type"`
 	LocationDetail string     `json:"location_detail,omitempty"`
-	GPSLat         float64    `json:"gps_lat,omitempty"`
-	GPSLong        float64    `json:"gps_long,omitempty"`
 	Notes          string     `json:"notes,omitempty"`
 	Late           bool       `json:"late"`
 	LateReason     string     `json:"late_reason,omitempty"`
@@ -31,8 +29,6 @@ type Checkin struct {
 
 // CheckinRequest is what the mobile app sends
 // Date is required, but backend should default to today if not provided
-// LocationType is required: home, office, client, temporary
-// GPS fields are optional
 // Notes is optional
 // LateReason is optional, only required if late
 // Time is optional, backend will set if not provided
@@ -42,8 +38,6 @@ type CheckinRequest struct {
 	Time           string  `json:"time,omitempty"`    // Optional, defaults to now
 	LocationType   string  `json:"location_type" binding:"required,oneof=home office client temporary"`
 	LocationDetail string  `json:"location_detail,omitempty"`
-	GPSLat         float64 `json:"gps_lat,omitempty"`
-	GPSLong        float64 `json:"gps_long,omitempty"`
 	Notes          string  `json:"notes,omitempty"`
 	LateReason     string  `json:"late_reason,omitempty"`
 }
@@ -58,8 +52,6 @@ type CheckinResponse struct {
 	Time           string     `json:"time"` // return as RFC3339 string for API clients
 	LocationType   string     `json:"location_type"`
 	LocationDetail string     `json:"location_detail,omitempty"`
-	GPSLat         float64    `json:"gps_lat,omitempty"`
-	GPSLong        float64    `json:"gps_long,omitempty"`
 	Notes          string     `json:"notes,omitempty"`
 	Late           bool       `json:"late"`
 	LateReason     string     `json:"late_reason,omitempty"`

@@ -1,12 +1,39 @@
 package models
 
 import (
+	"database/sql/driver"
+	"encoding/json"
+	"fmt"
 	"os"
 	"strconv"
 	"time"
 
 	"gopkg.in/mail.v2"
 )
+
+// Location represents a structured address
+type Location struct {
+	Calle         string `json:"calle,omitempty"`
+	Numero        string `json:"numero,omitempty"`
+	Piso          string `json:"piso,omitempty"`
+	Ciudad        string `json:"ciudad,omitempty"`
+	Provincia     string `json:"provincia,omitempty"`
+	CodigoPostal  string `json:"codigo_postal,omitempty"`
+	Pais          string `json:"pais,omitempty"`
+	Tipo LocationType `json:"tipo,omitempty" gorm:"type:int"`
+}
+
+func (l *Location) Scan(value interface{}) error {
+	bytes, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("failed to unmarshal Location value: %v", value)
+	}
+	return json.Unmarshal(bytes, l)
+}
+
+func (l Location) Value() (driver.Value, error) {
+	return json.Marshal(l)
+}
 
 type User struct {
 	ID uint `json:"id"`
@@ -31,6 +58,22 @@ type User struct {
 	Surname               string    `json:"surname"`
 	Phone                 string    `json:"phone"`
 	CheckoutEndTime       string    `json:"checkout_end_time" gorm:"type:varchar(8);default:''"`
+	
+	// Additional fields from Excel files (optional, filled by HR)
+	DNI                   string    `json:"dni,omitempty" gorm:"type:varchar(20)"`                    // National ID
+	CUIL                  string    `json:"cuil,omitempty" gorm:"type:varchar(20)"`                   // Tax ID
+	BirthDate             *time.Time `json:"birth_date,omitempty" gorm:"type:date"`                   // Birth date
+	HireDate              *time.Time `json:"hire_date,omitempty" gorm:"type:date"`                    // Hire date
+	Location              Location  `json:"location,omitempty" gorm:"type:jsonb"`                     // Structured address as JSON string
+	WeeklyHours           int       `json:"weekly_hours,omitempty" gorm:"default:0"`                  // Weekly working hours
+	Notes                 string    `json:"notes,omitempty" gorm:"type:text"`                         // General notes/aclaraciones
+	Team                  string    `json:"team,omitempty" gorm:"type:varchar(50)"`                   // Team/Equipo
+	ZohoAccess            bool      `json:"zoho_access,omitempty" gorm:"default:false"`               // ZOHO access
+	TeamsAccess           bool      `json:"teams_access,omitempty" gorm:"default:false"`              // Teams access
+	OnSiteRequired        bool      `json:"on_site_required,omitempty" gorm:"default:false"`          // Presencial requirement
+	WeeklyObjectiveDays   int       `json:"weekly_objective_days,omitempty" gorm:"default:0"`         // Dias Objetivo SEMANA
+	MonthlyObjectiveDays  int       `json:"monthly_objective_days,omitempty" gorm:"default:0"`        // Dias Objetivo MES
+	OfficeDays            string    `json:"office_days,omitempty" gorm:"type:varchar(50)"`            // Office days (e.g., "MA/JU", "LU/MI")
 }
 
 type RefreshToken struct {
@@ -56,3 +99,12 @@ func SendMail(to, subject, body string) error {
 	d := mail.NewDialer(host, port, user, pass)
 	return d.DialAndSend(m)
 }
+
+type LocationType int
+
+const (
+	LocationDomicilioRemotoDeclarado    LocationType = 1
+	LocationDomicilioRemotoAlternativo  LocationType = 2
+	LocationDomicilioCliente            LocationType = 3
+	LocationOficinaABSTI                LocationType = 4
+)

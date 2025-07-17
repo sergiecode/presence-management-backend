@@ -422,7 +422,7 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "User submits daily check-in with location and optional GPS. Only one per day. JWT required. If late, must provide reason.",
+                "description": "User submits daily check-in with location. Only one per day. JWT required. If late, must provide reason.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2330,12 +2330,6 @@ const docTemplate = `{
                     "description": "Optional, defaults to today",
                     "type": "string"
                 },
-                "gps_lat": {
-                    "type": "number"
-                },
-                "gps_long": {
-                    "type": "number"
-                },
                 "late_reason": {
                     "type": "string"
                 },
@@ -2381,12 +2375,6 @@ const docTemplate = `{
                 },
                 "date": {
                     "type": "string"
-                },
-                "gps_lat": {
-                    "type": "number"
-                },
-                "gps_long": {
-                    "type": "number"
                 },
                 "id": {
                     "type": "integer"
@@ -2667,7 +2655,7 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.0.2",
+	Version:          "0.1.0",
 	Host:             "",
 	BasePath:         "",
 	Schemes:          []string{"http", "https"},

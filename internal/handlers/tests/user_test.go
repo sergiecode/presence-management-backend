@@ -122,6 +122,72 @@ func TestUserCRUD(t *testing.T) {
 	}
 }
 
+func TestUserHRDetails(t *testing.T) {
+	setupTestDB()
+	r := setupTestRouter()
+	// Gin middleware to inject admin claims
+	r.Use(func(c *gin.Context) { addAdminAuth(c); c.Next() })
+
+	// Create a test user first
+	user := models.User{Email: "hr-test@x.com", Name: "HR Test User"}
+	body, _ := json.Marshal(user)
+	req := httptest.NewRequest("POST", "/api/users/", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 201 {
+		t.Fatalf("expected 201, got %d", w.Code)
+	}
+	var created models.User
+	json.Unmarshal(w.Body.Bytes(), &created)
+
+	// Test HR details update
+	hrDetails := models.UserHRDetailsRequest{
+		DNI:                  "12345678",
+		CUIL:                 "20-12345678-9",
+		Team:                 "AZ",
+		WeeklyHours:          40,
+		ZohoAccess:           true,
+		TeamsAccess:          true,
+		OnSiteRequired:       true,
+		WeeklyObjectiveDays:  5,
+		MonthlyObjectiveDays: 20,
+		OfficeDays:           "MA/JU",
+		Location: models.Location{
+			Calle:        "Test Street",
+			Numero:       "123",
+			Ciudad:       "Buenos Aires",
+			Provincia:    "CABA",
+			CodigoPostal: "1000",
+			Pais:         "Argentina",
+		},
+	}
+	body, _ = json.Marshal(hrDetails)
+	req = httptest.NewRequest("PUT", fmt.Sprintf("/api/users/%d/hr-details", created.ID), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	// Verify the update
+	var updated models.User
+	json.Unmarshal(w.Body.Bytes(), &updated)
+	if updated.DNI != "12345678" {
+		t.Fatalf("expected DNI 12345678, got %s", updated.DNI)
+	}
+	if updated.Team != "AZ" {
+		t.Fatalf("expected team AZ, got %s", updated.Team)
+	}
+	if !updated.ZohoAccess {
+		t.Fatalf("expected ZohoAccess true, got %v", updated.ZohoAccess)
+	}
+	if updated.Location.Calle != "Test Street" {
+		t.Fatalf("expected location calle Test Street, got %s", updated.Location.Calle)
+	}
+}
+
 // Helper for int to string (since strconv.Itoa is not imported)
 func itoa(i uint) string {
 	return fmt.Sprintf("%d", i)

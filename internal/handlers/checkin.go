@@ -16,20 +16,26 @@ import (
 	"go.uber.org/zap"
 )
 
+// CHECKIN ROUTES - Employee check-in/out operations
 func RegisterCheckinRoutes(r *gin.RouterGroup) {
+	// Primary checkin operations
 	r.POST("/", submitCheckin)
-	r.GET("/", getCheckinHistory)
-	r.GET("/all", listAllCheckins)
-	r.GET("/today", getTodayCheckin)
+	r.POST("/checkout", submitCheckout)
+	
+	// Individual checkin management
+	r.GET("/", getCheckinHistory)               // current user's history
+	r.GET("/today", getTodayCheckin)            // current user's today record
 	r.PUT("/:id", updateCheckin)
 	r.DELETE("/:id", deleteCheckin)
-	r.POST("/checkout", submitCheckout)
-	r.PUT("/checkout/:id", updateCheckoutForHR)
+	
+	// Admin/HR operations
+	r.GET("/all", listAllCheckins)              // all users' checkins (admin)
+	r.PUT("/checkout/:id", updateCheckoutForHR) // HR can update checkout
 	r.POST("/batch-approve", batchApproveCheckins)
 }
 
 // @Summary Submit daily check-in
-// @Description User submits daily check-in with location and optional GPS. Only one per day. JWT required. If late, must provide reason.
+// @Description User submits daily check-in with location. Only one per day. JWT required. If late, must provide reason.
 // @Tags checkin
 // @Accept json
 // @Produce json
@@ -158,12 +164,12 @@ func submitCheckin(c *gin.Context) {
 			var absence models.Absence
 			absenceErr := db.DB.Where("user_id = ? AND date = ?", user.ID, dateStr).First(&absence).Error
 			if absenceErr != nil {
-				absence = models.Absence{
-					UserID: user.ID,
-					Date:   dateStr,
-					Type:   "late",
-					Reason: req.LateReason,
-				}
+							absence = models.Absence{
+				UserID: user.ID,
+				Date:   dateStr,
+				Type:   models.AbsenceLate,
+				Reason: req.LateReason,
+			}
 				if err := db.DB.Create(&absence).Error; err == nil {
 					absenceID = &absence.ID
 				}
@@ -184,8 +190,6 @@ func submitCheckin(c *gin.Context) {
 			Time:           checkinDT,
 			LocationType:   req.LocationType,
 			LocationDetail: req.LocationDetail,
-			GPSLat:         req.GPSLat,
-			GPSLong:        req.GPSLong,
 			Notes:          req.Notes,
 			Late:           late,
 			LateReason:     req.LateReason,
@@ -195,8 +199,6 @@ func submitCheckin(c *gin.Context) {
 		checkin.Time = checkinDT
 		checkin.LocationType = req.LocationType
 		checkin.LocationDetail = req.LocationDetail
-		checkin.GPSLat = req.GPSLat
-		checkin.GPSLong = req.GPSLong
 		checkin.Notes = req.Notes
 		checkin.Late = late
 		checkin.LateReason = req.LateReason
@@ -212,7 +214,7 @@ func submitCheckin(c *gin.Context) {
 			absence = models.Absence{
 				UserID: user.ID,
 				Date:   dateStr,
-				Type:   "late",
+				Type:   models.AbsenceLate,
 				Reason: "Auto-created from check-in",
 			}
 			if err := db.DB.Create(&absence).Error; err == nil {
@@ -268,8 +270,6 @@ func submitCheckin(c *gin.Context) {
 		Time:           checkin.Time.Format(time.RFC3339),
 		LocationType:   checkin.LocationType,
 		LocationDetail: checkin.LocationDetail,
-		GPSLat:         checkin.GPSLat,
-		GPSLong:        checkin.GPSLong,
 		Notes:          checkin.Notes,
 		Late:           checkin.Late,
 		LateReason:     checkin.LateReason,
@@ -314,8 +314,6 @@ func getCheckinHistory(c *gin.Context) {
 			Time:           ch.Time.Format(time.RFC3339),
 			LocationType:   ch.LocationType,
 			LocationDetail: ch.LocationDetail,
-			GPSLat:         ch.GPSLat,
-			GPSLong:        ch.GPSLong,
 			Notes:          ch.Notes,
 			Late:           ch.Late,
 			LateReason:     ch.LateReason,
@@ -363,8 +361,6 @@ func getTodayCheckin(c *gin.Context) {
 		Time:           checkin.Time.Format(time.RFC3339),
 		LocationType:   checkin.LocationType,
 		LocationDetail: checkin.LocationDetail,
-		GPSLat:         checkin.GPSLat,
-		GPSLong:        checkin.GPSLong,
 		Notes:          checkin.Notes,
 		Late:           checkin.Late,
 		LateReason:     checkin.LateReason,
@@ -445,9 +441,7 @@ func listAllCheckins(c *gin.Context) {
 			Date:           ch.Date,
 			Time:           ch.Time.Format(time.RFC3339),
 			LocationType:   ch.LocationType,
-			LocationDetail: ch.LocationDetail,
-			GPSLat:         ch.GPSLat,
-			GPSLong:        ch.GPSLong,
+			LocationDetail: ch.LocationDetail,	
 			Notes:          ch.Notes,
 			Late:           ch.Late,
 			LateReason:     ch.LateReason,
@@ -591,8 +585,6 @@ func submitCheckout(c *gin.Context) {
 		Time:           checkin.Time.Format(time.RFC3339),
 		LocationType:   checkin.LocationType,
 		LocationDetail: checkin.LocationDetail,
-		GPSLat:         checkin.GPSLat,
-		GPSLong:        checkin.GPSLong,
 		Notes:          checkin.Notes,
 		Late:           checkin.Late,
 		LateReason:     checkin.LateReason,
@@ -678,8 +670,6 @@ func updateCheckoutForHR(c *gin.Context) {
 		Time:           checkin.Time.Format(time.RFC3339),
 		LocationType:   checkin.LocationType,
 		LocationDetail: checkin.LocationDetail,
-		GPSLat:         checkin.GPSLat,
-		GPSLong:        checkin.GPSLong,
 		Notes:          checkin.Notes,
 		Late:           checkin.Late,
 		LateReason:     checkin.LateReason,

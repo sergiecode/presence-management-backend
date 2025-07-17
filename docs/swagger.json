@@ -411,7 +411,7 @@
                 }
             },
             "post": {
-                "description": "User submits daily check-in with location and optional GPS. Only one per day. JWT required. If late, must provide reason.",
+                "description": "User submits daily check-in with location. Only one per day. JWT required. If late, must provide reason.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2319,12 +2319,6 @@
                     "description": "Optional, defaults to today",
                     "type": "string"
                 },
-                "gps_lat": {
-                    "type": "number"
-                },
-                "gps_long": {
-                    "type": "number"
-                },
                 "late_reason": {
                     "type": "string"
                 },
@@ -2370,12 +2364,6 @@
                 },
                 "date": {
                     "type": "string"
-                },
-                "gps_lat": {
-                    "type": "number"
-                },
-                "gps_long": {
-                    "type": "number"
                 },
                 "id": {
                     "type": "integer"

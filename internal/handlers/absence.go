@@ -14,16 +14,22 @@ import (
 	"go.uber.org/zap"
 )
 
+// ABSENCE ROUTES - Leave and absence management
 func RegisterAbsenceRoutes(r *gin.RouterGroup) {
+	// Primary absence operations
 	r.POST("/", reportAbsence)
-	r.GET("/", getAbsenceHistory)
+	r.GET("/", getAbsenceHistory)               // current user's absences
 	r.PUT("/:id", updateAbsence)
+	r.DELETE("/:id", deleteAbsence)
+	
+	// Document management
 	r.POST("/:id/documents", uploadAbsenceDocument)
 	r.GET("/:id/documents", getAbsenceDocuments)
-	r.PATCH("/:id/lock", lockAbsence)
-	r.GET("/all", listAllAbsences)
-	r.DELETE("/:id", deleteAbsence)
+	
+	// Admin/HR operations
+	r.GET("/all", listAllAbsences)              // all users' absences (admin)
 	r.POST("/batch-approve", batchApproveAbsences)
+	r.PATCH("/:id/lock", lockAbsence)           // admin lock absence record
 }
 
 // @Summary Report absence/late/medical
@@ -282,7 +288,7 @@ func uploadAbsenceDocument(c *gin.Context) {
 }
 
 func getAbsenceDocuments(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"message": "get absence documents (stub)"})
+	c.JSON(http.StatusOK, models.SimpleResponse{Message: "get absence documents (stub)"})
 }
 
 // @Summary Lock or unlock an absence
@@ -410,7 +416,7 @@ func listAllAbsences(c *gin.Context) {
 // @Tags absence
 // @Produce json
 // @Param id path int true "Absence ID"
-// @Success 200 {object} gin.H
+// @Success 200 {object} models.SimpleResponse
 // @Failure 401 {object} models.ErrorResponse
 // @Failure 403 {object} models.ErrorResponse
 // @Failure 404 {object} models.ErrorResponse
@@ -438,7 +444,7 @@ func deleteAbsence(c *gin.Context) {
 		c.JSON(500, models.ErrorResponse{Error: "Failed to delete absence", Details: err.Error()})
 		return
 	}
-	c.JSON(200, gin.H{"message": "Absence deleted"})
+	c.JSON(200, models.SimpleResponse{Message: "Absence deleted"})
 }
 
 // POST /api/absences/batch-approve
@@ -450,19 +456,19 @@ func batchApproveAbsences(c *gin.Context) {
 	}
 	var req reqBody
 	if err := c.ShouldBindJSON(&req); err != nil || len(req.IDs) == 0 || (req.Action != "approve" && req.Action != "reject") {
-		c.JSON(400, gin.H{"error": "Invalid request"})
+		c.JSON(400, models.SimpleResponse{Error: "Invalid request"})
 		return
 	}
 	claims, ok := c.Get("user")
 	if !ok {
-		c.JSON(401, gin.H{"error": "Unauthorized"})
+		c.JSON(401, models.SimpleResponse{Error: "Unauthorized"})
 		return
 	}
 	userClaims := claims.(map[string]interface{})
 	role, _ := userClaims["role"].(string)
 	// userEmail, _ := userClaims["email"].(string)
 	if role != "hr" && role != "admin" {
-		c.JSON(403, gin.H{"error": "Forbidden: HR or admin only"})
+		c.JSON(403, models.SimpleResponse{Error: "Forbidden: HR or admin only"})
 		return
 	}
 
@@ -486,11 +492,11 @@ func batchApproveAbsences(c *gin.Context) {
 	}
 	if failed > 0 {
 		tx.Rollback()
-		c.JSON(500, gin.H{"success": false, "processed": processed, "failed": failed, "message": "Some items failed, transaction rolled back"})
+		c.JSON(500, models.SimpleResponse{Success: false, Processed: processed, Failed: failed, Message: "Some items failed, transaction rolled back"})
 		return
 	}
 	tx.Commit()
-	c.JSON(200, gin.H{"success": true, "processed": processed, "failed": failed, "message": fmt.Sprintf("Processed %d absences", processed)})
+	c.JSON(200, models.SimpleResponse{Success: true, Processed: processed, Failed: failed, Message: fmt.Sprintf("Processed %d absences", processed)})
 }
 
 func getUserEmail(c *gin.Context) string {

@@ -120,10 +120,6 @@ definitions:
       date:
         description: Optional, defaults to today
         type: string
-      gps_lat:
-        type: number
-      gps_long:
-        type: number
       late_reason:
         type: string
       location_detail:
@@ -158,10 +154,6 @@ definitions:
         type: string
       date:
         type: string
-      gps_lat:
-        type: number
-      gps_long:
-        type: number
       id:
         type: integer
       late:
@@ -631,7 +623,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: User submits daily check-in with location and optional GPS. Only
+      description: User submits daily check-in with location. Only
         one per day. JWT required. If late, must provide reason.
       parameters:
       - description: Check-in data
