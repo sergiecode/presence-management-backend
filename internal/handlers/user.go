@@ -38,6 +38,7 @@ func RegisterUserRoutes(r *gin.RouterGroup) {
 // @Description Returns the authenticated user's profile info
 // @Tags users
 // @Produce json
+// @Security BearerAuth
 // @Success 200 {object} models.User
 // @Failure 401 {object} models.ErrorResponse
 // @Router /api/users/me [get]
@@ -71,12 +72,13 @@ func getMe(c *gin.Context) {
 // @Description Admin only. Returns paginated list of users. Query params: page, page_size, team, role, on_site_required
 // @Tags users
 // @Produce json
+// @Security BearerAuth
 // @Param page query int false "Page number (default 1)"
-// @Param page_size query int false "Page size (default 20)"
+// @Param page_size query int false "Page size (default 20, max 100)"
 // @Param team query string false "Filter by team"
 // @Param role query string false "Filter by role"
 // @Param on_site_required query bool false "Filter by on-site requirement"
-// @Success 200 {object} []models.User
+// @Success 200 {object} map[string]interface{}
 // @Failure 401 {object} models.ErrorResponse
 // @Failure 403 {object} models.ErrorResponse
 // @Router /api/users [get]
@@ -120,15 +122,29 @@ func listUsers(c *gin.Context) {
 		query = query.Where("on_site_required = ?", onSiteRequired == "true")
 	}
 	
+	// Get total count
+	var total int64
+	query.Count(&total)
+	
 	var users []models.User
 	query.Offset((page - 1) * pageSize).Limit(pageSize).Find(&users)
-	c.JSON(200, users)
+	
+	c.JSON(200, gin.H{
+		"data": users,
+		"pagination": gin.H{
+			"page":        page,
+			"page_size":   pageSize,
+			"total":       total,
+			"total_pages": int((total + int64(pageSize) - 1) / int64(pageSize)),
+		},
+	})
 }
 
 // @Summary Get user by ID
 // @Description Admin only. Get user details by ID.
 // @Tags users
 // @Produce json
+// @Security BearerAuth
 // @Param id path int true "User ID"
 // @Success 200 {object} models.User
 // @Failure 401 {object} models.ErrorResponse
@@ -167,6 +183,7 @@ func getUserByID(c *gin.Context) {
 // @Tags users
 // @Accept json
 // @Produce json
+// @Security BearerAuth
 // @Param id path int true "User ID"
 // @Param user body models.User true "User data"
 // @Success 200 {object} models.User
@@ -274,6 +291,7 @@ func updateUser(c *gin.Context) {
 // @Description Admin only. Soft delete user by setting deactivated=true.
 // @Tags users
 // @Produce json
+// @Security BearerAuth
 // @Param id path int true "User ID"
 // @Success 200 {object} models.SimpleResponse
 // @Failure 401 {object} models.ErrorResponse
@@ -311,6 +329,7 @@ func deleteUser(c *gin.Context) {
 // @Tags users
 // @Accept json
 // @Produce json
+// @Security BearerAuth
 // @Param id path int true "User ID"
 // @Param config body models.CheckinConfigRequest true "Check-in config"
 // @Success 200 {object} models.User
@@ -365,6 +384,7 @@ func updateUserCheckinConfig(c *gin.Context) {
 // @Description HR/admin can approve a user by setting pending_approval=false and deactivated=false.
 // @Tags users
 // @Produce json
+// @Security BearerAuth
 // @Param id path int true "User ID"
 // @Success 200 {object} models.SimpleResponse
 // @Failure 401 {object} models.ErrorResponse
@@ -403,6 +423,7 @@ func approveUser(c *gin.Context) {
 // @Description HR/admin can set email_confirmed=true for a user
 // @Tags users
 // @Produce json
+// @Security BearerAuth
 // @Param id path int true "User ID"
 // @Success 200 {object} models.SimpleResponse
 // @Failure 401 {object} models.ErrorResponse
@@ -440,6 +461,7 @@ func activateUserEmail(c *gin.Context) {
 // @Tags users
 // @Accept json
 // @Produce json
+// @Security BearerAuth
 // @Param id path int true "User ID"
 // @Param details body models.UserHRDetailsRequest true "HR details"
 // @Success 200 {object} models.User

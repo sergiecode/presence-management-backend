@@ -50,6 +50,8 @@ func RegisterDashboardRoutes(r *gin.RouterGroup) {
 // @Description Returns attendance stats (total check-ins, on-time %, late %) for date range. HR/admin only.
 // @Tags dashboard
 // @Produce json
+// @Security BearerAuth
+// @Security BearerAuth
 // @Param startDate query string false "Start date (YYYY-MM-DD)"
 // @Param endDate query string false "End date (YYYY-MM-DD)"
 // @Success 200 {object} map[string]interface{}
@@ -93,6 +95,8 @@ func getAttendanceStats(c *gin.Context) {
 // @Description Returns absence stats (total absences, by type) for date range. HR/admin only.
 // @Tags dashboard
 // @Produce json
+// @Security BearerAuth
+// @Security BearerAuth
 // @Param startDate query string false "Start date (YYYY-MM-DD)"
 // @Param endDate query string false "End date (YYYY-MM-DD)"
 // @Success 200 {object} map[string]interface{}
@@ -129,6 +133,8 @@ func getAbsenceStats(c *gin.Context) {
 // @Description Returns user stats (total, by role, by team). HR/admin only.
 // @Tags dashboard
 // @Produce json
+// @Security BearerAuth
+// @Security BearerAuth
 // @Success 200 {object} map[string]interface{}
 // @Failure 401 {object} models.ErrorResponse
 // @Failure 403 {object} models.ErrorResponse
@@ -187,6 +193,8 @@ func getUserStats(c *gin.Context) {
 // @Tags dashboard
 // @Accept json
 // @Produce json
+// @Security BearerAuth
+// @Security BearerAuth
 // @Param id path int true "Check-in ID"
 // @Param checkin body models.CheckinRequest true "Check-in data"
 // @Success 200 {object} models.CheckinResponse
@@ -266,6 +274,7 @@ func updateCheckinForHR(c *gin.Context) {
 // @Description Returns audit log entries. HR/admin only. Supports filtering by user_email, action, entity_type, entity_id, date. Paginated.
 // @Tags dashboard
 // @Produce json
+// @Security BearerAuth
 // @Param user_email query string false "User email"
 // @Param action query string false "Action"
 // @Param entity_type query string false "Entity type"
@@ -550,8 +559,11 @@ func parseDateRange(c *gin.Context) (string, string) {
 // @Description Returns a list of all active employees with their status for a given date. HR/admin only.
 // @Tags dashboard
 // @Produce json
+// @Security BearerAuth
 // @Param date query string true "Date (YYYY-MM-DD)"
-// @Success 200 {object} []map[string]interface{}
+// @Param page query int false "Page number (default 1)"
+// @Param page_size query int false "Page size (default 50, max 200)"
+// @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} models.ErrorResponse
 // @Failure 401 {object} models.ErrorResponse
 // @Failure 403 {object} models.ErrorResponse
@@ -572,6 +584,22 @@ func getAttendance(c *gin.Context) {
 	if date == "" {
 		c.JSON(400, gin.H{"error": "Missing date"})
 		return
+	}
+	
+	// Pagination parameters
+	page := 1
+	pageSize := 50
+	if v := c.Query("page"); v != "" {
+		fmt.Sscanf(v, "%d", &page)
+		if page < 1 {
+			page = 1
+		}
+	}
+	if v := c.Query("page_size"); v != "" {
+		fmt.Sscanf(v, "%d", &pageSize)
+		if pageSize < 1 || pageSize > 200 {
+			pageSize = 50
+		}
 	}
 
 	type attendanceRow struct {
@@ -599,6 +627,14 @@ func getAttendance(c *gin.Context) {
 		Overtime       *bool
 	}
 
+	// Get total count
+	var total int64
+	db.DB.Raw(`
+		SELECT COUNT(*)
+		FROM users u
+		WHERE u.deactivated = false AND u.pending_approval = false
+	`, date, date).Scan(&total)
+	
 	var rows []attendanceRow
 	db.DB.Raw(`
 	SELECT
@@ -625,7 +661,9 @@ func getAttendance(c *gin.Context) {
 	LEFT JOIN checkins c ON c.user_id = u.id AND c.date = ? AND c.deleted = false
 	LEFT JOIN absences a ON a.user_id = u.id AND a.date = ? AND a.deleted = false
 	WHERE u.deactivated = false AND u.pending_approval = false
-`, date, date).Scan(&rows)
+	ORDER BY u.name
+	LIMIT ? OFFSET ?
+`, date, date, pageSize, (page-1)*pageSize).Scan(&rows)
 
 	result := make([]map[string]interface{}, 0, len(rows))
 	for _, r := range rows {
@@ -717,7 +755,17 @@ func getAttendance(c *gin.Context) {
 		}
 		tableRows = append(tableRows, tableRow)
 	}
-	c.JSON(200, tableRows)
+	
+	// Return paginated response with metadata
+	c.JSON(200, gin.H{
+		"data": tableRows,
+		"pagination": gin.H{
+			"page":       page,
+			"page_size":  pageSize,
+			"total":      total,
+			"total_pages": int((total + int64(pageSize) - 1) / int64(pageSize)),
+		},
+	})
 }
 
 // Helper functions for nil deref
@@ -751,6 +799,7 @@ func derefInt(i *int) int {
 // @Description Returns the daily_summary row for a given date. HR/admin only.
 // @Tags dashboard
 // @Produce json
+// @Security BearerAuth
 // @Param date query string true "Date (YYYY-MM-DD)"
 // @Success 200 {object} models.DailySummary
 // @Failure 400 {object} models.ErrorResponse
@@ -792,6 +841,7 @@ func getDailySummary(c *gin.Context) {
 // @Description Returns all checkins for a given date from daily_checkins_view. HR/admin only.
 // @Tags dashboard
 // @Produce json
+// @Security BearerAuth
 // @Param date query string true "Date (YYYY-MM-DD)"
 // @Success 200 {array} map[string]interface{}
 // @Failure 400 {object} models.ErrorResponse
@@ -828,6 +878,7 @@ func getCheckinsView(c *gin.Context) {
 // @Description Returns checkin, absence, and user info for a given user/date. HR/admin only.
 // @Tags dashboard
 // @Produce json
+// @Security BearerAuth
 // @Param user_id query int true "User ID"
 // @Param date query string true "Date (YYYY-MM-DD)"
 // @Success 200 {object} map[string]interface{}
@@ -871,6 +922,7 @@ func ifNoRecordReturnNull(err error, v interface{}) interface{} {
 // @Tags dashboard
 // @Accept json
 // @Produce json
+// @Security BearerAuth
 // @Param checkin body models.CheckinRequest true "Check-in data"
 // @Success 200 {object} models.CheckinResponse
 // @Failure 400 {object} models.ErrorResponse
@@ -974,7 +1026,10 @@ func parseTimeOrNow(timeStr, dateStr string) time.Time {
 // @Description Returns monthly attendance analytics. HR/admin only.
 // @Tags dashboard
 // @Produce json
-// @Success 200 {object} []models.MonthlyStat
+// @Security BearerAuth
+// @Param page query int false "Page number (default 1)"
+// @Param page_size query int false "Page size (default 12, max 60)"
+// @Success 200 {object} map[string]interface{}
 // @Failure 401 {object} models.ErrorResponse
 // @Failure 403 {object} models.ErrorResponse
 // @Router /api/dashboard/analytics/monthly [get]
@@ -990,6 +1045,31 @@ func getMonthlyAnalytics(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: HR or admin only"})
 		return
 	}
+	
+	// Pagination parameters
+	page := 1
+	pageSize := 12
+	if v := c.Query("page"); v != "" {
+		fmt.Sscanf(v, "%d", &page)
+		if page < 1 {
+			page = 1
+		}
+	}
+	if v := c.Query("page_size"); v != "" {
+		fmt.Sscanf(v, "%d", &pageSize)
+		if pageSize < 1 || pageSize > 60 {
+			pageSize = 12
+		}
+	}
+	
+	// Get total count
+	var total int64
+	db.DB.Raw(`
+		SELECT COUNT(DISTINCT to_char(date::date, 'YYYY-MM'))
+		FROM checkins
+		WHERE deleted = false
+	`).Scan(&total)
+	
 	var stats []models.MonthlyStat
 	db.DB.Raw(`
 		SELECT
@@ -1001,15 +1081,28 @@ func getMonthlyAnalytics(c *gin.Context) {
 		WHERE deleted = false
 		GROUP BY month
 		ORDER BY month DESC
-	`).Scan(&stats)
-	c.JSON(http.StatusOK, stats)
+		LIMIT ? OFFSET ?
+	`, pageSize, (page-1)*pageSize).Scan(&stats)
+	
+	c.JSON(http.StatusOK, gin.H{
+		"data": stats,
+		"pagination": gin.H{
+			"page":        page,
+			"page_size":   pageSize,
+			"total":       total,
+			"total_pages": int((total + int64(pageSize) - 1) / int64(pageSize)),
+		},
+	})
 }
 
 // @Summary Get absence heatmap
 // @Description Returns a list of dates with counts of absences. HR/admin only.
 // @Tags dashboard
 // @Produce json
-// @Success 200 {object} []models.AbsenceHeatmapEntry
+// @Security BearerAuth
+// @Param page query int false "Page number (default 1)"
+// @Param page_size query int false "Page size (default 30, max 365)"
+// @Success 200 {object} map[string]interface{}
 // @Failure 401 {object} models.ErrorResponse
 // @Failure 403 {object} models.ErrorResponse
 // @Router /api/dashboard/analytics/heatmap [get]
@@ -1025,22 +1118,60 @@ func getAbsenceHeatmap(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: HR or admin only"})
 		return
 	}
+	
+	// Pagination parameters
+	page := 1
+	pageSize := 30
+	if v := c.Query("page"); v != "" {
+		fmt.Sscanf(v, "%d", &page)
+		if page < 1 {
+			page = 1
+		}
+	}
+	if v := c.Query("page_size"); v != "" {
+		fmt.Sscanf(v, "%d", &pageSize)
+		if pageSize < 1 || pageSize > 365 {
+			pageSize = 30
+		}
+	}
+	
+	// Get total count
+	var total int64
+	db.DB.Raw(`
+		SELECT COUNT(DISTINCT date)
+		FROM absences
+		WHERE deleted = false
+	`).Scan(&total)
+	
 	var heatmap []models.AbsenceHeatmapEntry
 	db.DB.Raw(`
 		SELECT date, COUNT(*) AS count
 		FROM absences
 		WHERE deleted = false
 		GROUP BY date
-		ORDER BY date
-	`).Scan(&heatmap)
-	c.JSON(http.StatusOK, heatmap)
+		ORDER BY date DESC
+		LIMIT ? OFFSET ?
+	`, pageSize, (page-1)*pageSize).Scan(&heatmap)
+	
+	c.JSON(http.StatusOK, gin.H{
+		"data": heatmap,
+		"pagination": gin.H{
+			"page":        page,
+			"page_size":   pageSize,
+			"total":       total,
+			"total_pages": int((total + int64(pageSize) - 1) / int64(pageSize)),
+		},
+	})
 }
 
 // @Summary Get overtime stats
 // @Description Returns a list of dates with counts of overtime. HR/admin only.
 // @Tags dashboard
 // @Produce json
-// @Success 200 {object} []models.OvertimeStatEntry
+// @Security BearerAuth
+// @Param page query int false "Page number (default 1)"
+// @Param page_size query int false "Page size (default 30, max 365)"
+// @Success 200 {object} map[string]interface{}
 // @Failure 401 {object} models.ErrorResponse
 // @Failure 403 {object} models.ErrorResponse
 // @Router /api/dashboard/stats/overtime [get]
@@ -1056,21 +1187,57 @@ func getOvertimeStats(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: HR or admin only"})
 		return
 	}
+	
+	// Pagination parameters
+	page := 1
+	pageSize := 30
+	if v := c.Query("page"); v != "" {
+		fmt.Sscanf(v, "%d", &page)
+		if page < 1 {
+			page = 1
+		}
+	}
+	if v := c.Query("page_size"); v != "" {
+		fmt.Sscanf(v, "%d", &pageSize)
+		if pageSize < 1 || pageSize > 365 {
+			pageSize = 30
+		}
+	}
+	
+	// Get total count
+	var total int64
+	db.DB.Raw(`
+		SELECT COUNT(DISTINCT date)
+		FROM checkins
+		WHERE deleted = false
+	`).Scan(&total)
+	
 	var overtime []models.OvertimeStatEntry
 	db.DB.Raw(`
 		SELECT date, SUM(CASE WHEN overtime THEN 1 ELSE 0 END) AS overtime
 		FROM checkins
 		WHERE deleted = false
 		GROUP BY date
-		ORDER BY date
-	`).Scan(&overtime)
-	c.JSON(http.StatusOK, overtime)
+		ORDER BY date DESC
+		LIMIT ? OFFSET ?
+	`, pageSize, (page-1)*pageSize).Scan(&overtime)
+	
+	c.JSON(http.StatusOK, gin.H{
+		"data": overtime,
+		"pagination": gin.H{
+			"page":        page,
+			"page_size":   pageSize,
+			"total":       total,
+			"total_pages": int((total + int64(pageSize) - 1) / int64(pageSize)),
+		},
+	})
 }
 
 // @Summary Get late check-in prediction
 // @Description Returns a list of late check-in predictions for the next 7 days. HR/admin only.
 // @Tags dashboard
 // @Produce json
+// @Security BearerAuth
 // @Success 200 {object} map[string]interface{}
 // @Failure 401 {object} models.ErrorResponse
 // @Failure 403 {object} models.ErrorResponse
@@ -1116,6 +1283,9 @@ func getLateCheckinPrediction(c *gin.Context) {
 // @Description Returns users grouped by team. HR/admin only.
 // @Tags dashboard
 // @Produce json
+// @Security BearerAuth
+// @Param page query int false "Page number (default 1)"
+// @Param page_size query int false "Page size (default 20, max 100)"
 // @Success 200 {object} map[string]interface{}
 // @Failure 401 {object} models.ErrorResponse
 // @Failure 403 {object} models.ErrorResponse
@@ -1133,22 +1303,50 @@ func getUsersByTeam(c *gin.Context) {
 		return
 	}
 	
+	// Pagination parameters
+	page := 1
+	pageSize := 20
+	if v := c.Query("page"); v != "" {
+		fmt.Sscanf(v, "%d", &page)
+		if page < 1 {
+			page = 1
+		}
+	}
+	if v := c.Query("page_size"); v != "" {
+		fmt.Sscanf(v, "%d", &pageSize)
+		if pageSize < 1 || pageSize > 100 {
+			pageSize = 20
+		}
+	}
+	
 	var teamUsers []struct {
 		Team string `json:"team"`
 		Users []models.User `json:"users"`
 	}
 	
-	// Get all teams
+	// Get total count of teams
+	var totalTeams int64
+	db.DB.Model(&models.User{}).
+		Distinct("team").
+		Where("team IS NOT NULL AND team != ''").
+		Count(&totalTeams)
+	
+	// Get teams with pagination
 	var teams []string
 	db.DB.Model(&models.User{}).
 		Distinct("team").
 		Where("team IS NOT NULL AND team != ''").
+		Order("team").
+		Limit(pageSize).
+		Offset((page - 1) * pageSize).
 		Pluck("team", &teams)
 	
-	// Get users for each team
+	// Get users for each team (with pagination per team)
 	for _, team := range teams {
 		var users []models.User
-		db.DB.Where("team = ? AND deactivated = ?", team, false).Find(&users)
+		db.DB.Where("team = ? AND deactivated = ?", team, false).
+			Order("name").
+			Find(&users)
 		teamUsers = append(teamUsers, struct {
 			Team  string       `json:"team"`
 			Users []models.User `json:"users"`
@@ -1160,6 +1358,12 @@ func getUsersByTeam(c *gin.Context) {
 	
 	c.JSON(http.StatusOK, gin.H{
 		"teams": teamUsers,
+		"pagination": gin.H{
+			"page":        page,
+			"page_size":   pageSize,
+			"total_teams": totalTeams,
+			"total_pages": int((totalTeams + int64(pageSize) - 1) / int64(pageSize)),
+		},
 	})
 }
 

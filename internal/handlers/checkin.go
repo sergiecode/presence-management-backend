@@ -39,6 +39,7 @@ func RegisterCheckinRoutes(r *gin.RouterGroup) {
 // @Tags checkin
 // @Accept json
 // @Produce json
+// @Security BearerAuth
 // @Param checkin body models.CheckinRequest true "Check-in data"
 // @Success 200 {object} models.CheckinResponse
 // @Failure 400 {object} models.ErrorResponse
@@ -283,7 +284,10 @@ func submitCheckin(c *gin.Context) {
 // @Description Returns all check-ins for the authenticated user, newest first. JWT required.
 // @Tags checkin
 // @Produce json
-// @Success 200 {array} models.CheckinResponse
+// @Security BearerAuth
+// @Param page query int false "Page number (default 1)"
+// @Param page_size query int false "Page size (default 20, max 100)"
+// @Success 200 {object} map[string]interface{}
 // @Failure 401 {object} models.ErrorResponse
 // @Router /api/checkins [get]
 func getCheckinHistory(c *gin.Context) {
@@ -295,8 +299,33 @@ func getCheckinHistory(c *gin.Context) {
 	userClaims := claims.(jwt.MapClaims)
 	_, _ = userClaims["role"].(string)
 	userID, _ := userClaims["user_id"].(float64)
+	
+	// Pagination parameters
+	page := 1
+	pageSize := 20
+	if v := c.Query("page"); v != "" {
+		fmt.Sscanf(v, "%d", &page)
+		if page < 1 {
+			page = 1
+		}
+	}
+	if v := c.Query("page_size"); v != "" {
+		fmt.Sscanf(v, "%d", &pageSize)
+		if pageSize < 1 || pageSize > 100 {
+			pageSize = 20
+		}
+	}
+	
+	// Get total count
+	var total int64
+	db.DB.Model(&models.Checkin{}).Where("user_id = ?", uint(userID)).Count(&total)
+	
 	var checkins []models.Checkin
-	err := db.DB.Where("user_id = ?", uint(userID)).Order("date desc").Find(&checkins).Error
+	err := db.DB.Where("user_id = ?", uint(userID)).
+		Order("date desc").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize).
+		Find(&checkins).Error
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to fetch check-ins", Details: err.Error()})
 		return
@@ -323,13 +352,23 @@ func getCheckinHistory(c *gin.Context) {
 			Overtime:       ch.Overtime,
 		}
 	}
-	c.JSON(http.StatusOK, resp)
+	
+	c.JSON(http.StatusOK, gin.H{
+		"data": resp,
+		"pagination": gin.H{
+			"page":        page,
+			"page_size":   pageSize,
+			"total":       total,
+			"total_pages": int((total + int64(pageSize) - 1) / int64(pageSize)),
+		},
+	})
 }
 
 // @Summary Get today's check-in
 // @Description Returns today's check-in for the authenticated user, or 404 if none. JWT required.
 // @Tags checkin
 // @Produce json
+// @Security BearerAuth
 // @Success 200 {object} models.CheckinResponse
 // @Failure 401 {object} models.ErrorResponse
 // @Failure 404 {object} models.ErrorResponse
@@ -385,6 +424,7 @@ func updateCheckin(c *gin.Context) {
 // @Description HR/admin only. Returns paginated list of all check-ins. Query params: page, page_size, user_id, date
 // @Tags checkin
 // @Produce json
+// @Security BearerAuth
 // @Param page query int false "Page number (default 1)"
 // @Param page_size query int false "Page size (default 20)"
 // @Param user_id query int false "Filter by user ID"
@@ -458,6 +498,7 @@ func listAllCheckins(c *gin.Context) {
 // @Description HR/admin only. Soft delete a check-in by setting deleted=true.
 // @Tags checkin
 // @Produce json
+// @Security BearerAuth
 // @Param id path int true "Check-in ID"
 // @Success 200 {object} models.ErrorResponse
 // @Failure 401 {object} models.ErrorResponse
@@ -495,6 +536,7 @@ func deleteCheckin(c *gin.Context) {
 // @Tags checkin
 // @Accept json
 // @Produce json
+// @Security BearerAuth
 // @Param checkout body models.CheckoutRequest true "Checkout data"
 // @Success 200 {object} models.CheckinResponse
 // @Failure 400 {object} models.ErrorResponse
@@ -601,6 +643,7 @@ func submitCheckout(c *gin.Context) {
 // @Tags checkin
 // @Accept json
 // @Produce json
+// @Security BearerAuth
 // @Param id path int true "Check-in ID"
 // @Param checkout body models.CheckoutUpdateRequest true "Checkout update data"
 // @Success 200 {object} models.CheckinResponse
@@ -686,6 +729,7 @@ func updateCheckoutForHR(c *gin.Context) {
 // @Tags checkin
 // @Accept json
 // @Produce json
+// @Security BearerAuth
 // @Param body body models.BatchApproveRequest true "Batch approve request"
 // @Success 200 {object} models.BatchApproveResponse
 // @Failure 400 {object} models.ErrorResponse

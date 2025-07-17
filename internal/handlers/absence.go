@@ -37,6 +37,7 @@ func RegisterAbsenceRoutes(r *gin.RouterGroup) {
 // @Tags absence
 // @Accept json
 // @Produce json
+// @Security BearerAuth
 // @Param absence body models.AbsenceRequest true "Absence data"
 // @Success 200 {object} models.AbsenceResponse
 // @Failure 400 {object} models.ErrorResponse
@@ -99,7 +100,10 @@ func reportAbsence(c *gin.Context) {
 // @Description Returns all absences for the authenticated user, newest first. JWT required.
 // @Tags absence
 // @Produce json
-// @Success 200 {array} models.AbsenceResponse
+// @Security BearerAuth
+// @Param page query int false "Page number (default 1)"
+// @Param page_size query int false "Page size (default 20, max 100)"
+// @Success 200 {object} map[string]interface{}
 // @Failure 401 {object} models.ErrorResponse
 // @Router /api/absences [get]
 func getAbsenceHistory(c *gin.Context) {
@@ -114,8 +118,33 @@ func getAbsenceHistory(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "Invalid token"})
 		return
 	}
+	
+	// Pagination parameters
+	page := 1
+	pageSize := 20
+	if v := c.Query("page"); v != "" {
+		fmt.Sscanf(v, "%d", &page)
+		if page < 1 {
+			page = 1
+		}
+	}
+	if v := c.Query("page_size"); v != "" {
+		fmt.Sscanf(v, "%d", &pageSize)
+		if pageSize < 1 || pageSize > 100 {
+			pageSize = 20
+		}
+	}
+	
+	// Get total count
+	var total int64
+	db.DB.Model(&models.Absence{}).Where("user_id = ?", uint(userID)).Count(&total)
+	
 	var absences []models.Absence
-	err := db.DB.Where("user_id = ?", uint(userID)).Order("date desc").Find(&absences).Error
+	err := db.DB.Where("user_id = ?", uint(userID)).
+		Order("date desc").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize).
+		Find(&absences).Error
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to fetch absences", Details: err.Error()})
 		return
@@ -132,7 +161,16 @@ func getAbsenceHistory(c *gin.Context) {
 			CreatedAt: ab.CreatedAt.Format(time.RFC3339),
 		}
 	}
-	c.JSON(http.StatusOK, resp)
+	
+	c.JSON(http.StatusOK, gin.H{
+		"data": resp,
+		"pagination": gin.H{
+			"page":        page,
+			"page_size":   pageSize,
+			"total":       total,
+			"total_pages": int((total + int64(pageSize) - 1) / int64(pageSize)),
+		},
+	})
 }
 
 // @Summary Update absence/late/medical
@@ -140,6 +178,7 @@ func getAbsenceHistory(c *gin.Context) {
 // @Tags absence
 // @Accept json
 // @Produce json
+// @Security BearerAuth
 // @Param id path int true "Absence ID"
 // @Param absence body models.AbsenceRequest true "Absence data"
 // @Success 200 {object} models.AbsenceResponse
@@ -220,6 +259,7 @@ func updateAbsence(c *gin.Context) {
 // @Tags absence
 // @Accept multipart/form-data
 // @Produce json
+// @Security BearerAuth
 // @Param id path int true "Absence ID"
 // @Param file formData file true "Medical certificate file"
 // @Success 200 {object} models.AbsenceResponse
@@ -296,6 +336,7 @@ func getAbsenceDocuments(c *gin.Context) {
 // @Tags absence
 // @Accept json
 // @Produce json
+// @Security BearerAuth
 // @Param id path int true "Absence ID"
 // @Param lock body models.LockAbsenceRequest true "Lock state"
 // @Success 200 {object} models.AbsenceResponse
@@ -348,6 +389,7 @@ func lockAbsence(c *gin.Context) {
 // @Description HR/admin only. Returns paginated list of all absences. Query params: page, page_size, user_id, date, type
 // @Tags absence
 // @Produce json
+// @Security BearerAuth
 // @Param page query int false "Page number (default 1)"
 // @Param page_size query int false "Page size (default 20)"
 // @Param user_id query int false "Filter by user ID"
@@ -415,6 +457,7 @@ func listAllAbsences(c *gin.Context) {
 // @Description HR/admin only. Soft delete an absence by setting deleted=true.
 // @Tags absence
 // @Produce json
+// @Security BearerAuth
 // @Param id path int true "Absence ID"
 // @Success 200 {object} models.SimpleResponse
 // @Failure 401 {object} models.ErrorResponse
