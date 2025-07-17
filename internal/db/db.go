@@ -14,13 +14,22 @@ import (
 var DB *gorm.DB
 
 func Connect() error {
+	host := os.Getenv("DB_HOST")
+	user := os.Getenv("DB_USER")
+	password := os.Getenv("DB_PASSWORD")
+	dbname := os.Getenv("DB_NAME")
+	port := os.Getenv("DB_PORT")
+	
+	// Debug logging
+	fmt.Printf("Connecting to database: host=%s, user=%s, dbname=%s, port=%s\n", host, user, dbname, port)
+	
 	dsn := fmt.Sprintf(
 		"host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=UTC",
-		os.Getenv("DB_HOST"),
-		os.Getenv("DB_USER"),
-		os.Getenv("DB_PASSWORD"),
-		os.Getenv("DB_NAME"),
-		os.Getenv("DB_PORT"),
+		host,
+		user,
+		password,
+		dbname,
+		port,
 	)
 	var err error
 	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
@@ -86,17 +95,18 @@ func RunSQLMigrations() error {
 		c.user_id,
 		u.name AS user_name,
 		u.email AS user_email,
-		c.date,
+		c.time::date AS date,
 		c.time AS checkin_time,
 		c.checkout_time,
 		c.late,
 		c.overtime,
-		c.location_type,
-		c.location_detail,
+		cl.location_type,
+		cl.location_detail,
 		c.notes,
 		c.checkout_status
 	FROM checkins c
 	JOIN users u ON c.user_id = u.id
+	LEFT JOIN checkin_locations cl ON c.id = cl.checkin_id
 	WHERE c.deleted = false;
 
 	-- Create daily_summary table for aggregated daily check-in stats
@@ -128,6 +138,39 @@ func RunSQLMigrations() error {
 			return fmt.Errorf("failed to mark migration 1 as applied: %w", err)
 		}
 	}
+
+	// Migration 2: Add checkin_locations table and migrate existing data
+	migration2 := `
+	-- Create the checkin_locations table
+	CREATE TABLE IF NOT EXISTS checkin_locations (
+		id SERIAL PRIMARY KEY,
+		checkin_id INTEGER NOT NULL REFERENCES checkins(id) ON DELETE CASCADE,
+		location_type INTEGER NOT NULL CHECK (location_type >= 1 AND location_type <= 4),
+		location_detail TEXT,
+		created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+	);
+
+	-- Create indexes for performance
+	CREATE INDEX IF NOT EXISTS idx_checkin_locations_checkin_id ON checkin_locations(checkin_id);
+	CREATE INDEX IF NOT EXISTS idx_checkin_locations_location_type ON checkin_locations(location_type);
+
+	-- Skip data migration since we're starting fresh with new structure
+	-- The old checkins table doesn't have location_type and location_detail columns
+	`
+	
+	// Check if migration 2 has been applied
+	DB.Model(&struct{}{}).Table("schema_migrations").Where("version = ?", "002_checkin_locations").Count(&count)
+	
+	if count == 0 {
+		if err := DB.Exec(migration2).Error; err != nil {
+			return fmt.Errorf("failed to run migration 2: %w", err)
+		}
+		
+		// Mark migration as applied
+		if err := DB.Exec("INSERT INTO schema_migrations (version) VALUES (?)", "002_checkin_locations").Error; err != nil {
+			return fmt.Errorf("failed to mark migration 2 as applied: %w", err)
+		}
+	}
 	
 	return nil
 }
@@ -136,19 +179,19 @@ func RunSQLMigrations() error {
 func UpdateDailySummary(date string) error {
 	var total, onTime, late, overtime int64
 	// Count total checkins
-	if err := DB.Model(&models.Checkin{}).Where("date = ? AND deleted = false", date).Count(&total).Error; err != nil {
+	if err := DB.Model(&models.Checkin{}).Where("DATE(time) = ? AND deleted = false", date).Count(&total).Error; err != nil {
 		return err
 	}
 	// Count on-time checkins
-	if err := DB.Model(&models.Checkin{}).Where("date = ? AND late = false AND deleted = false", date).Count(&onTime).Error; err != nil {
+	if err := DB.Model(&models.Checkin{}).Where("DATE(time) = ? AND late = false AND deleted = false", date).Count(&onTime).Error; err != nil {
 		return err
 	}
 	// Count late checkins
-	if err := DB.Model(&models.Checkin{}).Where("date = ? AND late = true AND deleted = false", date).Count(&late).Error; err != nil {
+	if err := DB.Model(&models.Checkin{}).Where("DATE(time) = ? AND late = true AND deleted = false", date).Count(&late).Error; err != nil {
 		return err
 	}
 	// Count overtime checkouts
-	if err := DB.Model(&models.Checkin{}).Where("date = ? AND overtime = true AND deleted = false", date).Count(&overtime).Error; err != nil {
+	if err := DB.Model(&models.Checkin{}).Where("DATE(time) = ? AND overtime = true AND deleted = false", date).Count(&overtime).Error; err != nil {
 		return err
 	}
 	now := time.Now().UTC()

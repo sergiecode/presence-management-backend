@@ -43,3 +43,5 @@ go.work.sum
 OpenCode.md
 ART vacio.xlsx
 Presentismo vacio.xlsx
+run_migrations.go
+mock_data.sql

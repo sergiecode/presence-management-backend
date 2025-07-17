@@ -5,14 +5,11 @@ import "time"
 // Checkin is the DB model for a user check-in
 // GORM will auto-manage ID, CreatedAt, UpdatedAt
 // UserID is a foreign key to User
-// Date is stored as YYYY-MM-DD string for simplicity (could use time.Time if you want)
+// Time is the main check-in timestamp (replaces separate date field)
 type Checkin struct {
 	ID             uint       `json:"id" gorm:"primaryKey"`
 	UserID         uint       `json:"user_id" gorm:"index"`
-	Date           string     `json:"date" gorm:"type:date;index"`               // YYYY-MM-DD
-	Time           time.Time  `json:"time" gorm:"type:timestamp with time zone"` // precise check-in time
-	LocationType   string     `json:"location_type"`
-	LocationDetail string     `json:"location_detail,omitempty"`
+	Time           time.Time  `json:"time" gorm:"type:timestamp with time zone;index"` // Main check-in time
 	Notes          string     `json:"notes,omitempty"`
 	Late           bool       `json:"late"`
 	LateReason     string     `json:"late_reason,omitempty"`
@@ -23,43 +20,60 @@ type Checkin struct {
 	CheckoutStatus string     `json:"checkout_status,omitempty" gorm:"type:varchar(32);default:''"`
 	Overtime       bool       `json:"overtime" gorm:"default:false"`
 	AbsenceID      *uint      `json:"absence_id,omitempty" gorm:"index"`
+	// Relationship to multiple locations
+	Locations      []CheckinLocation `json:"locations" gorm:"foreignKey:CheckinID"`
 }
 
-// NOTE: You must run a DB migration to convert the column type if you have existing data.
+// CheckinLocation represents a work location for a check-in
+// One check-in can have multiple locations (e.g., office in morning, client in afternoon)
+type CheckinLocation struct {
+	ID             uint       `json:"id" gorm:"primaryKey"`
+	CheckinID      uint       `json:"checkin_id" gorm:"index"`
+	LocationType   int        `json:"location_type" binding:"required,min=1,max=4"`
+	LocationDetail string     `json:"location_detail,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+}
 
 // CheckinRequest is what the mobile app sends
-// Date is required, but backend should default to today if not provided
+// Time is required, backend will set if not provided
 // Notes is optional
 // LateReason is optional, only required if late
-// Time is optional, backend will set if not provided
+// Locations is an array of work locations for the day
 type CheckinRequest struct {
-	UserID         uint    `json:"user_id,omitempty"` // Optional, extracted from JWT if not provided
-	Date           string  `json:"date,omitempty"`    // Optional, defaults to today
-	Time           string  `json:"time,omitempty"`    // Optional, defaults to now
-	LocationType   string  `json:"location_type" binding:"required,oneof=home office client temporary"`
-	LocationDetail string  `json:"location_detail,omitempty"`
-	Notes          string  `json:"notes,omitempty"`
-	LateReason     string  `json:"late_reason,omitempty"`
+	UserID         uint              `json:"user_id,omitempty"` // Optional, extracted from JWT if not provided
+	Time           string            `json:"time,omitempty"`    // Optional, defaults to now
+	Notes          string            `json:"notes,omitempty"`
+	LateReason     string            `json:"late_reason,omitempty"`
+	Locations      []LocationRequest `json:"locations" binding:"required,min=1"`
+}
+
+// LocationRequest represents a single location in the check-in request
+type LocationRequest struct {
+	LocationType   int    `json:"location_type" binding:"required,min=1,max=4"`
+	LocationDetail string `json:"location_detail,omitempty"`
+}
+
+// UpdateLocationsRequest is used to update locations during the day
+type UpdateLocationsRequest struct {
+	Locations []LocationRequest `json:"locations" binding:"required,min=1"`
 }
 
 // CheckinResponse is what the API returns
 // Mirrors the Checkin model, but can be extended for extra info
 // (e.g., user info, status, etc.)
 type CheckinResponse struct {
-	ID             uint       `json:"id"`
-	UserID         uint       `json:"user_id"`
-	Date           string     `json:"date"`
-	Time           string     `json:"time"` // return as RFC3339 string for API clients
-	LocationType   string     `json:"location_type"`
-	LocationDetail string     `json:"location_detail,omitempty"`
-	Notes          string     `json:"notes,omitempty"`
-	Late           bool       `json:"late"`
-	LateReason     string     `json:"late_reason,omitempty"`
-	CreatedAt      string     `json:"created_at"`
-	CheckoutTime   *time.Time `json:"checkout_time,omitempty"`
-	CheckoutStatus string     `json:"checkout_status,omitempty"`
-	Overtime       bool       `json:"overtime,omitempty"`
-	AbsenceID      *uint      `json:"absence_id,omitempty"`
+	ID             uint               `json:"id"`
+	UserID         uint               `json:"user_id"`
+	Time           string             `json:"time"` // return as RFC3339 string for API clients
+	Notes          string             `json:"notes,omitempty"`
+	Late           bool               `json:"late"`
+	LateReason     string             `json:"late_reason,omitempty"`
+	CreatedAt      string             `json:"created_at"`
+	CheckoutTime   *time.Time         `json:"checkout_time,omitempty"`
+	CheckoutStatus string             `json:"checkout_status,omitempty"`
+	Overtime       bool               `json:"overtime,omitempty"`
+	AbsenceID      *uint              `json:"absence_id,omitempty"`
+	Locations      []CheckinLocation  `json:"locations"`
 }
 
 // CheckinConfigRequest is what the mobile app sends

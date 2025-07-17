@@ -229,9 +229,20 @@ func updateCheckinForHR(c *gin.Context) {
 	old := checkin // shallow copy for audit
 	parsedCheckinTime, _ := time.Parse(time.RFC3339, req.Time)
 	checkin.Time = parsedCheckinTime // parse req.CheckinTime as time.Time before
-	checkin.LocationType = req.LocationType
-	checkin.LocationDetail = req.LocationDetail
 	checkin.Notes = req.Notes
+	
+	// Update locations - first delete existing ones
+	db.DB.Where("checkin_id = ?", checkin.ID).Delete(&models.CheckinLocation{})
+	
+	// Create new locations
+	for _, loc := range req.Locations {
+		location := models.CheckinLocation{
+			CheckinID:      checkin.ID,
+			LocationType:   loc.LocationType,
+			LocationDetail: loc.LocationDetail,
+		}
+		db.DB.Create(&location)
+	}
 	if err := db.DB.Save(&checkin).Error; err != nil {
 		logger.Log.Error("Failed to update check-in (dashboard)",
 			zap.String("endpoint", c.FullPath()),
@@ -257,15 +268,16 @@ func updateCheckinForHR(c *gin.Context) {
 	}
 	_ = db.DB.Create(&audit).Error // ignore error for now, or handle/log as needed
 
+	// Load locations for the response
+	db.DB.Model(&checkin).Association("Locations").Find(&checkin.Locations)
+	
 	resp := models.CheckinResponse{
 		ID:             checkin.ID,
 		UserID:         checkin.UserID,
-		Date:           checkin.Date,
 		Time:           checkin.Time.Format(time.RFC3339),
-		LocationType:   checkin.LocationType,
-		LocationDetail: checkin.LocationDetail,
 		Notes:          checkin.Notes,
 		CreatedAt:      checkin.CreatedAt.Format(time.RFC3339),
+		Locations:      checkin.Locations,
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -379,10 +391,10 @@ func exportCheckinsToExcel(c *gin.Context) {
 			u.location,
 			u.weekly_hours as hrs_semanales,
 			u.notes as aclaraciones,
-			c.date,
+			DATE(c.time) as date,
 			c.time,
-			c.location_type,
-			c.location_detail,
+			cl.location_type,
+			cl.location_detail,
 			c.late,
 			c.late_reason,
 			c.checkout_time,
@@ -390,6 +402,7 @@ func exportCheckinsToExcel(c *gin.Context) {
 			c.overtime
 		FROM checkins c
 		JOIN users u ON c.user_id = u.id
+		LEFT JOIN checkin_locations cl ON c.id = cl.checkin_id
 		WHERE c.deleted = false
 	`
 	
@@ -397,12 +410,12 @@ func exportCheckinsToExcel(c *gin.Context) {
 	argCount := 1
 	
 	if startDate != "" {
-		query += fmt.Sprintf(" AND c.date >= $%d", argCount)
+		query += fmt.Sprintf(" AND DATE(c.time) >= $%d", argCount)
 		args = append(args, startDate)
 		argCount++
 	}
 	if endDate != "" {
-		query += fmt.Sprintf(" AND c.date <= $%d", argCount)
+		query += fmt.Sprintf(" AND DATE(c.time) <= $%d", argCount)
 		args = append(args, endDate)
 		argCount++
 	}
@@ -412,7 +425,7 @@ func exportCheckinsToExcel(c *gin.Context) {
 		argCount++
 	}
 	
-	query += " ORDER BY c.date DESC, u.name"
+	query += " ORDER BY DATE(c.time) DESC, u.name"
 	
 	type exportRow struct {
 		Empleado        string     `json:"empleado"`
@@ -425,7 +438,7 @@ func exportCheckinsToExcel(c *gin.Context) {
 		Aclaraciones    string     `json:"aclaraciones"`
 		Date            string     `json:"date"`
 		Time            time.Time  `json:"time"`
-		LocationType    string     `json:"location_type"`
+		LocationType    int        `json:"location_type"`
 		LocationDetail  string     `json:"location_detail"`
 		Late            bool       `json:"late"`
 		LateReason      string     `json:"late_reason"`
@@ -610,7 +623,7 @@ func getAttendance(c *gin.Context) {
 		CheckinID        *uint
 		CheckinTime      *time.Time
 		Late             *bool
-		LocationType     *string
+		LocationType     *int
 		LocationDetail   *string
 		Notes            *string
 		LateReason       *string
@@ -644,8 +657,8 @@ func getAttendance(c *gin.Context) {
 	c.id AS checkin_id,
 	c.time AS checkin_time,
 	c.late,
-	c.location_type,
-	c.location_detail,
+	cl.location_type,
+	cl.location_detail,
 	c.notes,
 	c.late_reason,
 	c.created_at AS checkin_created_at,
@@ -658,7 +671,8 @@ func getAttendance(c *gin.Context) {
 	c.checkout_status,
 	c.overtime
 	FROM users u
-	LEFT JOIN checkins c ON c.user_id = u.id AND c.date = ? AND c.deleted = false
+	LEFT JOIN checkins c ON c.user_id = u.id AND DATE(c.time) = ? AND c.deleted = false
+	LEFT JOIN checkin_locations cl ON c.id = cl.checkin_id
 	LEFT JOIN absences a ON a.user_id = u.id AND a.date = ? AND a.deleted = false
 	WHERE u.deactivated = false AND u.pending_approval = false
 	ORDER BY u.name
@@ -676,13 +690,19 @@ func getAttendance(c *gin.Context) {
 			if r.CheckoutTime != nil {
 				checkoutTime = r.CheckoutTime
 			}
+			// Create locations array from the query result
+			var locations []models.CheckinLocation
+			if r.LocationType != nil {
+				locations = append(locations, models.CheckinLocation{
+					LocationType:   *r.LocationType,
+					LocationDetail: derefString(r.LocationDetail),
+				})
+			}
+			
 			checkin = &models.CheckinResponse{
 				ID:             *r.CheckinID,
 				UserID:         r.UserID,
-				Date:           date,
 				Time:           r.CheckinTime.Format("2006-01-02 15:04:05"),
-				LocationType:   derefString(r.LocationType),
-				LocationDetail: derefString(r.LocationDetail),	
 				Notes:          derefString(r.Notes),
 				Late:           derefBool(r.Late),
 				LateReason:     derefString(r.LateReason),
@@ -690,6 +710,7 @@ func getAttendance(c *gin.Context) {
 				CheckoutTime:   checkoutTime,
 				CheckoutStatus: derefString(r.CheckoutStatus),
 				Overtime:       derefBool(r.Overtime),
+				Locations:      locations,
 			}
 			if r.Late != nil && *r.Late {
 				status = "late"
@@ -743,8 +764,14 @@ func getAttendance(c *gin.Context) {
 		}
 		if checkin != nil {
 			tableRow["checkin_time"] = checkin.Time
-			tableRow["location_type"] = checkin.LocationType
-			tableRow["location_detail"] = checkin.LocationDetail
+			// Get first location type if available
+		if len(checkin.Locations) > 0 {
+			tableRow["location_type"] = checkin.Locations[0].LocationType
+		}
+			// Get first location detail if available
+			if len(checkin.Locations) > 0 {
+				tableRow["location_detail"] = checkin.Locations[0].LocationDetail
+			}
 			tableRow["checkout_time"] = checkin.CheckoutTime
 			tableRow["checkout_status"] = checkin.CheckoutStatus
 			tableRow["overtime"] = checkin.Overtime
@@ -950,20 +977,51 @@ func createOrReplaceCheckinForHR(c *gin.Context) {
 		return
 	}
 	var checkin models.Checkin
-	// Try to find even soft-deleted
-	err := db.DB.Unscoped().Where("user_id = ? AND date = ?", req.UserID, req.Date).First(&checkin).Error
+	// Try to find even soft-deleted by extracting date from time field
+	// Extract date from the provided time or use today
+	var checkDate string
+	if req.Time != "" {
+		// Try to parse the time and extract date
+		if t, err := time.Parse(time.RFC3339, req.Time); err == nil {
+			checkDate = t.Format("2006-01-02")
+		} else {
+			// Try other formats
+			layouts := []string{"2006-01-02T15:04:05", "2006-01-02 15:04:05"}
+			for _, layout := range layouts {
+				if t, err := time.Parse(layout, req.Time); err == nil {
+					checkDate = t.Format("2006-01-02")
+					break
+				}
+			}
+		}
+	}
+	if checkDate == "" {
+		checkDate = time.Now().Format("2006-01-02")
+	}
+	err := db.DB.Unscoped().Where("user_id = ? AND DATE(time) = ?", req.UserID, checkDate).First(&checkin).Error
 	if err == nil {
 		// Restore if deleted
 		if checkin.Deleted {
 			checkin.Deleted = false
 		}
 		// Update fields
-		checkin.Time = parseTimeOrNow(req.Time, req.Date)
-		checkin.LocationType = req.LocationType
-		checkin.LocationDetail = req.LocationDetail
+		checkin.Time = parseTimeOrNow(req.Time, "")
 		checkin.Notes = req.Notes
 		checkin.Late = req.LateReason != ""
 		checkin.LateReason = req.LateReason
+		
+		// Update locations - first delete existing ones
+		db.DB.Where("checkin_id = ?", checkin.ID).Delete(&models.CheckinLocation{})
+		
+		// Create new locations
+		for _, loc := range req.Locations {
+			location := models.CheckinLocation{
+				CheckinID:      checkin.ID,
+				LocationType:   loc.LocationType,
+				LocationDetail: loc.LocationDetail,
+			}
+			db.DB.Create(&location)
+		}
 		if err := db.DB.Save(&checkin).Error; err != nil {
 			logger.Log.Error("Failed to update check-in (dashboard)",
 				zap.String("endpoint", c.FullPath()),
@@ -978,31 +1036,39 @@ func createOrReplaceCheckinForHR(c *gin.Context) {
 	} else {
 		// Create new
 		checkin = models.Checkin{
-			UserID:         req.UserID,
-			Date:           req.Date,
-			Time:           parseTimeOrNow(req.Time, req.Date),
-			LocationType:   req.LocationType,
-			LocationDetail: req.LocationDetail,
-			Notes:          req.Notes,
-			Late:           req.LateReason != "",
-			LateReason:     req.LateReason,
+			UserID:     req.UserID,
+			Time:       parseTimeOrNow(req.Time, ""),
+			Notes:      req.Notes,
+			Late:       req.LateReason != "",
+			LateReason: req.LateReason,
 		}
 		if err := db.DB.Create(&checkin).Error; err != nil {
 			c.JSON(500, models.ErrorResponse{Error: "Failed to create check-in", Details: err.Error()})
 			return
 		}
+		
+		// Create locations for the new check-in
+		for _, loc := range req.Locations {
+			location := models.CheckinLocation{
+				CheckinID:      checkin.ID,
+				LocationType:   loc.LocationType,
+				LocationDetail: loc.LocationDetail,
+			}
+			db.DB.Create(&location)
+		}
 	}
+	// Load locations for the response
+	db.DB.Model(&checkin).Association("Locations").Find(&checkin.Locations)
+	
 	resp := models.CheckinResponse{
 		ID:             checkin.ID,
 		UserID:         checkin.UserID,
-		Date:           checkin.Date,
 		Time:           checkin.Time.Format(time.RFC3339),
-		LocationType:   checkin.LocationType,
-		LocationDetail: checkin.LocationDetail,
 		Notes:          checkin.Notes,
 		Late:           checkin.Late,
 		LateReason:     checkin.LateReason,
 		CreatedAt:      checkin.CreatedAt.Format(time.RFC3339),
+		Locations:      checkin.Locations,
 	}
 	c.JSON(200, resp)
 }
@@ -1020,6 +1086,10 @@ func parseTimeOrNow(timeStr, dateStr string) time.Time {
 				return t
 			}
 		}
+	}
+	// If no time provided and no date, use current time
+	if dateStr == "" {
+		return time.Now()
 	}
 	t, _ := time.Parse("2006-01-02 15:04:05", dateStr+" 09:00:00")
 	return t
@@ -1068,7 +1138,7 @@ func getMonthlyAnalytics(c *gin.Context) {
 	// Get total count
 	var total int64
 	db.DB.Raw(`
-		SELECT COUNT(DISTINCT to_char(date::date, 'YYYY-MM'))
+		SELECT COUNT(DISTINCT to_char(time::date, 'YYYY-MM'))
 		FROM checkins
 		WHERE deleted = false
 	`).Scan(&total)
@@ -1076,7 +1146,7 @@ func getMonthlyAnalytics(c *gin.Context) {
 	var stats []models.MonthlyStat
 	db.DB.Raw(`
 		SELECT
-			to_char(date::date, 'YYYY-MM') AS month,
+			to_char(time::date, 'YYYY-MM') AS month,
 			COUNT(*) AS total,
 			SUM(CASE WHEN late THEN 1 ELSE 0 END) AS late,
 			SUM(CASE WHEN overtime THEN 1 ELSE 0 END) AS overtime
@@ -1210,18 +1280,18 @@ func getOvertimeStats(c *gin.Context) {
 	// Get total count
 	var total int64
 	db.DB.Raw(`
-		SELECT COUNT(DISTINCT date)
+		SELECT COUNT(DISTINCT DATE(time))
 		FROM checkins
 		WHERE deleted = false
 	`).Scan(&total)
 	
 	var overtime []models.OvertimeStatEntry
 	db.DB.Raw(`
-		SELECT date, SUM(CASE WHEN overtime THEN 1 ELSE 0 END) AS overtime
+		SELECT DATE(time) as date, SUM(CASE WHEN overtime THEN 1 ELSE 0 END) AS overtime
 		FROM checkins
 		WHERE deleted = false
-		GROUP BY date
-		ORDER BY date DESC
+		GROUP BY DATE(time)
+		ORDER BY DATE(time) DESC
 		LIMIT ? OFFSET ?
 	`, pageSize, (page-1)*pageSize).Scan(&overtime)
 	
@@ -1262,11 +1332,11 @@ func getLateCheckinPrediction(c *gin.Context) {
 		Late int64
 	}
 	db.DB.Raw(`
-		SELECT date, SUM(CASE WHEN late THEN 1 ELSE 0 END) AS late
+		SELECT DATE(time) as date, SUM(CASE WHEN late THEN 1 ELSE 0 END) AS late
 		FROM checkins
 		WHERE deleted = false
-		GROUP BY date
-		ORDER BY date DESC
+		GROUP BY DATE(time)
+		ORDER BY DATE(time) DESC
 		LIMIT 30
 	`).Scan(&daily)
 
@@ -1413,8 +1483,8 @@ func exportAttendanceToExcel(c *gin.Context) {
 			c.id AS checkin_id,
 			c.time AS checkin_time,
 			c.late,
-			c.location_type,
-			c.location_detail,
+			cl.location_type,
+			cl.location_detail,
 			c.notes,
 			c.late_reason,
 			c.checkout_time,
@@ -1424,7 +1494,8 @@ func exportAttendanceToExcel(c *gin.Context) {
 			a.type AS absence_type,
 			a.reason AS absence_reason
 		FROM users u
-		LEFT JOIN checkins c ON c.user_id = u.id AND c.date = ? AND c.deleted = false
+		LEFT JOIN checkins c ON c.user_id = u.id AND DATE(c.time) = ? AND c.deleted = false
+		LEFT JOIN checkin_locations cl ON c.id = cl.checkin_id
 		LEFT JOIN absences a ON a.user_id = u.id AND a.date = ? AND a.deleted = false
 		WHERE u.deactivated = false AND u.pending_approval = false
 		ORDER BY u.name
@@ -1443,7 +1514,7 @@ func exportAttendanceToExcel(c *gin.Context) {
 		CheckinID       *uint      `json:"checkin_id"`
 		CheckinTime     *time.Time `json:"checkin_time"`
 		Late            *bool      `json:"late"`
-		LocationType    *string    `json:"location_type"`
+		LocationType    *int       `json:"location_type"`
 		LocationDetail  *string    `json:"location_detail"`
 		Notes           *string    `json:"notes"`
 		LateReason      *string    `json:"late_reason"`
@@ -1549,7 +1620,7 @@ func exportAttendanceToExcel(c *gin.Context) {
 		// Format location type and detail
 		locationTypeStr := ""
 		if data.LocationType != nil {
-			locationTypeStr = *data.LocationType
+			locationTypeStr = fmt.Sprintf("%d", *data.LocationType)
 		}
 		
 		locationDetailStr := ""

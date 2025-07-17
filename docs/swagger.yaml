@@ -125,12 +125,13 @@ definitions:
       location_detail:
         type: string
       location_type:
-        enum:
-        - home
-        - office
-        - client
-        - temporary
-        type: string
+        type: integer
+        enum: [1, 2, 3, 4]
+        description: |
+          1 = Domicilio remoto declarado
+          2 = Domicilio remoto alternativo
+          3 = Domicilio del cliente
+          4 = Oficina de ABSTI
       notes:
         type: string
       time:

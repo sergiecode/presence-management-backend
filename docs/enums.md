@@ -1,31 +1,67 @@
 # Enum Values for Frontend
 
-This document contains the enum values that should be used in the frontend as constants.
+## Checkin LocationType (int)
+- 1: Domicilio remoto declarado
+- 2: Domicilio remoto alternativo
+- 3: Domicilio del cliente
+- 4: Oficina de ABSTI
 
-## Absence Types
+## API Usage Examples
 
-| ID | Constant Name | Display Text |
-|----|---------------|--------------|
-| 1 | `ABSENCE_MATERNITY` | Licencia por maternidad |
-| 2 | `ABSENCE_SICK_LEAVE` | Licencia por enfermedad |
-| 3 | `ABSENCE_SICK_ABSENCE` | Ausente por enfermedad |
-| 4 | `ABSENCE_FAMILY_SICK` | Ausente por enfermedad familiar |
-| 5 | `ABSENCE_STUDY` | Ausente por día de estudio/examen |
-| 6 | `ABSENCE_BEREAVEMENT` | Ausente por duelo |
-| 7 | `ABSENCE_MOVING` | Día por mudanza |
-| 8 | `ABSENCE_VACATION` | Vacaciones |
-| 9 | `ABSENCE_LATE` | Tarde |
-| 10 | `ABSENCE_MEDICAL` | Médico |
-| 11 | `ABSENCE_GENERAL` | Ausencia |
+### First check-in of the day
+```json
+POST /api/checkins
+{
+  "time": "2025-07-17T08:30:00Z",
+  "notes": "Starting at office",
+  "locations": [
+    {
+      "location_type": 4,
+      "location_detail": "ABSTI Office - Floor 4"
+    }
+  ]
+}
+```
 
-## Location Types
+### Change location during the day
+```json
+PUT /api/checkins/locations
+{
+  "locations": [
+    {
+      "location_type": 4,
+      "location_detail": "ABSTI Office - Floor 4"
+    },
+    {
+      "location_type": 3,
+      "location_detail": "Client XYZ Office"
+    }
+  ]
+}
+```
 
-| ID | Constant Name | Display Text |
-|----|---------------|--------------|
-| 1 | `LOCATION_REMOTE_DECLARED` | Domicilio remoto declarado |
-| 2 | `LOCATION_REMOTE_ALTERNATIVE` | Domicilio remoto alternativo |
-| 3 | `LOCATION_CLIENT` | Domicilio del cliente |
-| 4 | `LOCATION_OFFICE` | Oficina de ABSTI |
+### Response format
+```json
+{
+  "id": 1,
+  "user_id": 1,
+  "time": "2025-07-17T08:30:00Z",
+  "notes": "On time check-in",
+  "late": false,
+  "locations": [
+    {
+      "id": 1,
+      "location_type": 4,
+      "location_detail": "ABSTI Office - Floor 4"
+    },
+    {
+      "id": 2,
+      "location_type": 3,
+      "location_detail": "Client XYZ Office"
+    }
+  ]
+}
+```
 
 ## Frontend Implementation Example
 

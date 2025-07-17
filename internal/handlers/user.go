@@ -17,6 +17,7 @@ func RegisterUserRoutes(r *gin.RouterGroup) {
 	// Current user operations
 	r.GET("/me", getMe)
 	r.PATCH("/me", updateMyProfile)             // PATCH for partial updates
+	r.PUT("/me/checkin-config", updateMyCheckinConfig)  // Users can update their own config
 	
 	// Admin user management
 	r.GET("/", listUsers)                       // GET /api/users
@@ -24,8 +25,9 @@ func RegisterUserRoutes(r *gin.RouterGroup) {
 	r.PUT("/:id", updateUser)                   // PUT /api/users/:id (full update)
 	r.DELETE("/:id", deleteUser)                // DELETE /api/users/:id
 	
-	// Admin user configuration
+	// Admin user configuration - support both PUT and PATCH
 	r.PUT("/:id/checkin-config", updateUserCheckinConfig)
+	r.PATCH("/:id/checkin-config", updateUserCheckinConfig)
 	r.PUT("/:id/hr-details", updateUserHRDetails)
 	
 	// Admin user status management
@@ -373,6 +375,9 @@ func updateUserCheckinConfig(c *gin.Context) {
 	if req.NotificationOffsetMin > 0 {
 		user.NotificationOffsetMin = req.NotificationOffsetMin
 	}
+	if req.CheckoutEndTime != "" {
+		user.CheckoutEndTime = req.CheckoutEndTime
+	}
 	if err := db.DB.Save(&user).Error; err != nil {
 		c.JSON(500, gin.H{"error": "Failed to update user", "details": err.Error()})
 		return
@@ -592,6 +597,49 @@ func updateMyProfile(c *gin.Context) {
 
 	if err := db.DB.Save(&user).Error; err != nil {
 		c.JSON(500, gin.H{"error": "Failed to update profile", "details": err.Error()})
+		return
+	}
+	c.JSON(200, user)
+}
+
+// updateMyCheckinConfig allows users to update their own checkin configuration
+func updateMyCheckinConfig(c *gin.Context) {
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(401, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userClaims := claims.(jwt.MapClaims)
+	userID, _ := userClaims["user_id"].(float64)
+
+	var user models.User
+	if err := db.DB.First(&user, uint(userID)).Error; err != nil {
+		c.JSON(404, gin.H{"error": "User not found"})
+		return
+	}
+
+	var req models.CheckinConfigRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid request", "details": err.Error()})
+		return
+	}
+
+	// Update fields if provided
+	if req.CheckinStartTime != "" {
+		user.CheckinStartTime = req.CheckinStartTime
+	}
+	if req.Timezone != "" {
+		user.Timezone = req.Timezone
+	}
+	if req.NotificationOffsetMin > 0 {
+		user.NotificationOffsetMin = req.NotificationOffsetMin
+	}
+	if req.CheckoutEndTime != "" {
+		user.CheckoutEndTime = req.CheckoutEndTime
+	}
+
+	if err := db.DB.Save(&user).Error; err != nil {
+		c.JSON(500, gin.H{"error": "Failed to update checkin config", "details": err.Error()})
 		return
 	}
 	c.JSON(200, user)

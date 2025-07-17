@@ -36,7 +36,7 @@ func TestDashboardEndpoints(t *testing.T) {
 	// Seed data
 	user := models.User{Email: "hr@absti.com", Name: "HR", Role: "hr"}
 	db.DB.Create(&user)
-	checkin := models.Checkin{UserID: user.ID, Date: time.Now().Format("2006-01-02"), Time: time.Now(), LocationType: "office"}
+	checkin := models.Checkin{UserID: user.ID, Time: time.Now()}
 	db.DB.Create(&checkin)
 	absence := models.Absence{UserID: user.ID, Date: time.Now().Format("2006-01-02"), Type: "absence", Reason: "Vacation"}
 	db.DB.Create(&absence)

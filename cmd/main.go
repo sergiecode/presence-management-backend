@@ -24,6 +24,7 @@ import (
 	"BE-ABSTI-CLOCKIN/internal/handlers"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"time"
 
@@ -44,6 +45,7 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 	"golang.org/x/crypto/bcrypt"
+	"go.uber.org/zap"
 )
 
 func ensureAdminUser() {
@@ -137,7 +139,7 @@ func main() {
 	}
 
 	// Run GORM AutoMigrate first to create tables
-	if err := db.DB.AutoMigrate(&models.User{}, &models.Checkin{}, &models.Absence{}, &models.AuditLog{}, &models.RefreshToken{}); err != nil {
+	if err := db.DB.AutoMigrate(&models.User{}, &models.Checkin{}, &models.CheckinLocation{}, &models.Absence{}, &models.AuditLog{}, &models.RefreshToken{}); err != nil {
 		log.Fatalf("failed to migrate database: %v", err)
 	}
 	
@@ -151,10 +153,34 @@ func main() {
 
 	ensureAdminUser()
 
-	hash, _ := bcrypt.GenerateFromPassword([]byte("testpass"), bcrypt.DefaultCost)
-	fmt.Println(string(hash))
 
 	r := gin.Default()
+
+	// Add recovery middleware to catch panics
+	r.Use(gin.Recovery())
+	
+	// Custom error handler middleware
+	r.Use(func(c *gin.Context) {
+		c.Next()
+		
+		// Check if there were any errors
+		if len(c.Errors) > 0 {
+			err := c.Errors.Last()
+			logger.Log.Error("Request error",
+				zap.String("method", c.Request.Method),
+				zap.String("path", c.Request.URL.Path),
+				zap.Error(err.Err),
+			)
+			
+			// If no response has been written yet, return a proper error
+			if !c.Writer.Written() {
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"error": "Internal server error",
+					"details": err.Error(),
+				})
+			}
+		}
+	})
 
 	// CORS middleware - must be before routes
 	r.Use(cors.New(cors.Config{
@@ -175,10 +201,7 @@ func main() {
 	handlers.RegisterCheckinRoutes(auth.Group("/checkins"))
 	handlers.RegisterAbsenceRoutes(auth.Group("/absences"))
 	handlers.RegisterDashboardRoutes(auth.Group("/dashboard"))
-	auth.GET("/protected", func(c *gin.Context) {
-		claims, _ := c.Get("user")
-		c.JSON(200, gin.H{"message": "You are authenticated!", "claims": claims})
-	})
+
 
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 

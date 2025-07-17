@@ -46,7 +46,7 @@ func TestCheckinAdminCRUD(t *testing.T) {
 	// Insert a user and a check-in
 	user := models.User{Email: "emp@x.com", Name: "Emp"}
 	db.DB.Create(&user)
-	checkin := models.Checkin{UserID: user.ID, Date: "2024-06-20", Time: time.Now(), LocationType: "office"}
+	checkin := models.Checkin{UserID: user.ID, Time: time.Now()}
 	db.DB.Create(&checkin)
 
 	// --- List all check-ins ---
