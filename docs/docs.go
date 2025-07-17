@@ -7,10 +7,10 @@ const docTemplate = `{
     "schemes": {{ marshal .Schemes }},
     "swagger": "2.0",
     "info": {
-        "description": "{{escape .Description}}",
-        "title": "{{.Title}}",
+        "description": "ABSTI Clockin API",
+        "title": "ABSTI Clockin API",
         "contact": {},
-        "version": "{{.Version}}"
+        "version": "0.1.0"
     },
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
