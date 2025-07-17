@@ -865,12 +865,15 @@ func getCheckinsView(c *gin.Context) {
 		c.JSON(400, models.ErrorResponse{Error: "Missing date"})
 		return
 	}
-	var rows []map[string]interface{}
+	// Initialize as empty slice to ensure we always return an array, not null
+	rows := make([]map[string]interface{}, 0)
 	err := db.DB.Raw("SELECT * FROM daily_checkins_view WHERE date = ?", date).Scan(&rows).Error
 	if err != nil {
 		c.JSON(500, models.ErrorResponse{Error: "Failed to fetch checkins view", Details: err.Error()})
 		return
 	}
+	
+	// Always return an array, even if empty
 	c.JSON(200, rows)
 }
 

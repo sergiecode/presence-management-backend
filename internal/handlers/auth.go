@@ -213,7 +213,8 @@ func loginHandler(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Email not confirmed"})
 		return
 	}
-	if user.PendingApproval {
+	// Admin users should not be blocked by pending approval
+	if user.PendingApproval && user.Role != "admin" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Account pending HR approval"})
 		return
 	}

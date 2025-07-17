@@ -1,6 +1,6 @@
-// @title ABSTI Clockin API
+// @title ABSTI Presence API
 // @version 1.0
-// @description ABSTI Clockin API for employee attendance management
+// @description ABSTI Presence API for employee attendance management
 // @termsOfService http://swagger.io/terms/
 
 // @contact.name API Support
@@ -47,24 +47,48 @@ import (
 )
 
 func ensureAdminUser() {
+	// First, try to find any existing admin user
 	var admin models.User
-	err := db.DB.Where("role = ? AND deactivated = ?", "admin", false).First(&admin).Error
+	err := db.DB.Where("email = ?", "admin@absti.com").First(&admin).Error
+	
 	if err == nil {
-		// Ensure admin is not pending approval or deactivated
-		if admin.PendingApproval || admin.Deactivated {
+		// Admin exists, ensure it's properly configured
+		needsUpdate := false
+		if admin.PendingApproval {
 			admin.PendingApproval = false
-			admin.Deactivated = false
-			db.DB.Save(&admin)
-			log.Println("Admin user re-activated and approved")
+			needsUpdate = true
 		}
-		log.Println("Admin user already exists")
+		if admin.Deactivated {
+			admin.Deactivated = false
+			needsUpdate = true
+		}
+		if !admin.EmailConfirmed {
+			admin.EmailConfirmed = true
+			needsUpdate = true
+		}
+		if admin.Role != "admin" {
+			admin.Role = "admin"
+			needsUpdate = true
+		}
+		
+		if needsUpdate {
+			if err := db.DB.Save(&admin).Error; err != nil {
+				log.Printf("Failed to update admin user: %v", err)
+			} else {
+				log.Println("Admin user updated and properly configured")
+			}
+		} else {
+			log.Println("Admin user already exists and properly configured")
+		}
 		return
 	}
-	// If not found, create admin
+	
+	// Admin doesn't exist, create it
 	hash, err := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
 	if err != nil {
 		log.Fatalf("failed to hash admin password: %v", err)
 	}
+	
 	admin = models.User{
 		Email:           "admin@absti.com",
 		Name:            "Admin",
@@ -74,10 +98,11 @@ func ensureAdminUser() {
 		PendingApproval: false,
 		Deactivated:     false,
 	}
-	if err := db.DB.Where(models.User{Email: admin.Email}).FirstOrCreate(&admin).Error; err != nil {
+	
+	if err := db.DB.Create(&admin).Error; err != nil {
 		log.Fatalf("failed to create admin user: %v", err)
 	}
-	log.Println("Admin user created or already present")
+	log.Println("Admin user created successfully")
 }
 
 func main() {
@@ -111,12 +136,18 @@ func main() {
 		log.Fatalf("failed to connect to database: %v", err)
 	}
 
+	// Run GORM AutoMigrate first to create tables
 	if err := db.DB.AutoMigrate(&models.User{}, &models.Checkin{}, &models.Absence{}, &models.AuditLog{}, &models.RefreshToken{}); err != nil {
 		log.Fatalf("failed to migrate database: %v", err)
 	}
+	
+	// Run SQL migrations after tables are created
+	if err := db.RunSQLMigrations(); err != nil {
+		log.Fatalf("failed to run SQL migrations: %v", err)
+	}
+
 	// Add compound index for (user_id, date) if not exists
 	db.DB.Exec("CREATE INDEX IF NOT EXISTS idx_checkins_user_date ON checkins (user_id, date);")
-	// TODO: Add migration for daily_checkins_view and daily_summary table
 
 	ensureAdminUser()
 
