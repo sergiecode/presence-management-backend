@@ -14,9 +14,9 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U abstiuser"]
-      interval: 5s
-      timeout: 5s
+      test: ["CMD-SHELL", "pg_isready -U abstiuser -d absti"]
+      interval: 15s
+      timeout: 15s
       retries: 5
 
   api:
