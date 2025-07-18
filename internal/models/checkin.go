@@ -21,17 +21,17 @@ type Checkin struct {
 	Overtime       bool       `json:"overtime" gorm:"default:false"`
 	AbsenceID      *uint      `json:"absence_id,omitempty" gorm:"index"`
 	// Relationship to multiple locations
-	Locations      []CheckinLocation `json:"locations" gorm:"foreignKey:CheckinID"`
+	Locations []CheckinLocation `json:"locations" gorm:"foreignKey:CheckinID"`
 }
 
 // CheckinLocation represents a work location for a check-in
 // One check-in can have multiple locations (e.g., office in morning, client in afternoon)
 type CheckinLocation struct {
-	ID             uint       `json:"id" gorm:"primaryKey"`
-	CheckinID      uint       `json:"checkin_id" gorm:"index"`
-	LocationType   int        `json:"location_type" binding:"required,min=1,max=4"`
-	LocationDetail string     `json:"location_detail,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	CheckinID      uint      `json:"checkin_id" gorm:"index"`
+	LocationType   int       `json:"location_type" binding:"required,min=1,max=4"`
+	LocationDetail string    `json:"location_detail,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // CheckinRequest is what the mobile app sends
@@ -40,11 +40,11 @@ type CheckinLocation struct {
 // LateReason is optional, only required if late
 // Locations is an array of work locations for the day
 type CheckinRequest struct {
-	UserID         uint              `json:"user_id,omitempty"` // Optional, extracted from JWT if not provided
-	Time           string            `json:"time,omitempty"`    // Optional, defaults to now
-	Notes          string            `json:"notes,omitempty"`
-	LateReason     string            `json:"late_reason,omitempty"`
-	Locations      []LocationRequest `json:"locations" binding:"required,min=1"`
+	UserID     uint              `json:"user_id,omitempty"` // Optional, extracted from JWT if not provided
+	Time       string            `json:"time,omitempty"`    // Optional, defaults to now
+	Notes      string            `json:"notes,omitempty"`
+	LateReason string            `json:"late_reason,omitempty"`
+	Locations  []LocationRequest `json:"locations" binding:"required,min=1"`
 }
 
 // LocationRequest represents a single location in the check-in request
@@ -62,18 +62,18 @@ type UpdateLocationsRequest struct {
 // Mirrors the Checkin model, but can be extended for extra info
 // (e.g., user info, status, etc.)
 type CheckinResponse struct {
-	ID             uint               `json:"id"`
-	UserID         uint               `json:"user_id"`
-	Time           string             `json:"time"` // return as RFC3339 string for API clients
-	Notes          string             `json:"notes,omitempty"`
-	Late           bool               `json:"late"`
-	LateReason     string             `json:"late_reason,omitempty"`
-	CreatedAt      string             `json:"created_at"`
-	CheckoutTime   *time.Time         `json:"checkout_time,omitempty"`
-	CheckoutStatus string             `json:"checkout_status,omitempty"`
-	Overtime       bool               `json:"overtime,omitempty"`
-	AbsenceID      *uint              `json:"absence_id,omitempty"`
-	Locations      []CheckinLocation  `json:"locations"`
+	ID             uint              `json:"id"`
+	UserID         uint              `json:"user_id"`
+	Time           string            `json:"time"` // return as RFC3339 string for API clients
+	Notes          string            `json:"notes,omitempty"`
+	Late           bool              `json:"late"`
+	LateReason     string            `json:"late_reason,omitempty"`
+	CreatedAt      string            `json:"created_at"`
+	CheckoutTime   *time.Time        `json:"checkout_time,omitempty"`
+	CheckoutStatus string            `json:"checkout_status,omitempty"`
+	Overtime       bool              `json:"overtime,omitempty"`
+	AbsenceID      *uint             `json:"absence_id,omitempty"`
+	Locations      []CheckinLocation `json:"locations"`
 }
 
 // CheckinConfigRequest is what the mobile app sends
@@ -152,4 +152,14 @@ type AbsenceHeatmapEntry struct {
 type OvertimeStatEntry struct {
 	Date     string `json:"date"`
 	Overtime int64  `json:"overtime"`
+}
+
+// ConvertAbsenceRequest is used for HR/admin to convert absence to checkin
+type ConvertAbsenceRequest struct {
+	AbsenceID   uint              `json:"absence_id" binding:"required"`
+	CheckinTime string            `json:"checkin_time,omitempty"` // RFC3339, optional
+	Notes       string            `json:"notes,omitempty"`
+	Late        bool              `json:"late"`
+	LateReason  string            `json:"late_reason,omitempty"`
+	Locations   []LocationRequest `json:"locations" binding:"required,min=1"`
 }

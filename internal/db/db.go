@@ -19,10 +19,10 @@ func Connect() error {
 	password := os.Getenv("DB_PASSWORD")
 	dbname := os.Getenv("DB_NAME")
 	port := os.Getenv("DB_PORT")
-	
+
 	// Debug logging
 	fmt.Printf("Connecting to database: host=%s, user=%s, dbname=%s, port=%s\n", host, user, dbname, port)
-	
+
 	dsn := fmt.Sprintf(
 		"host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=UTC",
 		host,
@@ -37,43 +37,48 @@ func Connect() error {
 }
 
 // RunSQLMigrations executes SQL migration files with versioning
-// 
-// K8s DEPLOYMENT RECOMMENDATIONS:
-// 
-// 1. CURRENT APPROACH (Recommended for small teams):
-//    - This versioned migration system is safe for K8s
-//    - Each migration runs only once per database, not per pod restart
-//    - Multiple replicas can start simultaneously without conflicts
-//    - No external dependencies or manual steps required
 //
-// 2. ALTERNATIVE: Dedicated Migration Job (For complex deployments):
-//    ```yaml
-//    # k8s job that runs migrations before app deployment
-//    apiVersion: batch/v1
-//    kind: Job
-//    metadata:
-//      name: db-migrations
-//    spec:
-//      template:
-//        spec:
-//          containers:
-//          - name: migrations
-//            image: your-app:latest
-//            command: ["./migrate"]
-//          restartPolicy: Never
-//    ```
+// K8s DEPLOYMENT RECOMMENDATIONS:
+//
+// 1. CURRENT APPROACH (Recommended for small teams):
+//
+//   - This versioned migration system is safe for K8s
+//
+//   - Each migration runs only once per database, not per pod restart
+//
+//   - Multiple replicas can start simultaneously without conflicts
+//
+//   - No external dependencies or manual steps required
+//
+//     2. ALTERNATIVE: Dedicated Migration Job (For complex deployments):
+//     ```yaml
+//     # k8s job that runs migrations before app deployment
+//     apiVersion: batch/v1
+//     kind: Job
+//     metadata:
+//     name: db-migrations
+//     spec:
+//     template:
+//     spec:
+//     containers:
+//
+//   - name: migrations
+//     image: your-app:latest
+//     command: ["./migrate"]
+//     restartPolicy: Never
+//     ```
 //
 // 3. ALTERNATIVE: Migration Tool (For complex databases):
-//    - Use golang-migrate or similar tools
-//    - Better for databases with frequent schema changes
-//    - More sophisticated rollback capabilities
+//   - Use golang-migrate or similar tools
+//   - Better for databases with frequent schema changes
+//   - More sophisticated rollback capabilities
 //
 // 4. PRODUCTION CONSIDERATIONS:
-//    - Monitor migration execution in logs
-//    - Consider database connection pooling during migrations
-//    - Test migrations in staging environment first
-//    - Have rollback plan for critical migrations
-//    - Consider using database locks for complex migrations
+//   - Monitor migration execution in logs
+//   - Consider database connection pooling during migrations
+//   - Test migrations in staging environment first
+//   - Have rollback plan for critical migrations
+//   - Consider using database locks for complex migrations
 func RunSQLMigrations() error {
 	// Create migrations table if it doesn't exist
 	createMigrationsTable := `
@@ -123,16 +128,16 @@ func RunSQLMigrations() error {
 	-- Optional: index for fast date queries
 	CREATE INDEX IF NOT EXISTS idx_daily_summary_date ON daily_summary (date);
 	`
-	
+
 	// Check if migration 1 has been applied
 	var count int64
 	DB.Model(&struct{}{}).Table("schema_migrations").Where("version = ?", "001_daily_checkins_view").Count(&count)
-	
+
 	if count == 0 {
 		if err := DB.Exec(migration1).Error; err != nil {
 			return fmt.Errorf("failed to run migration 1: %w", err)
 		}
-		
+
 		// Mark migration as applied
 		if err := DB.Exec("INSERT INTO schema_migrations (version) VALUES (?)", "001_daily_checkins_view").Error; err != nil {
 			return fmt.Errorf("failed to mark migration 1 as applied: %w", err)
@@ -157,21 +162,95 @@ func RunSQLMigrations() error {
 	-- Skip data migration since we're starting fresh with new structure
 	-- The old checkins table doesn't have location_type and location_detail columns
 	`
-	
+
 	// Check if migration 2 has been applied
 	DB.Model(&struct{}{}).Table("schema_migrations").Where("version = ?", "002_checkin_locations").Count(&count)
-	
+
 	if count == 0 {
 		if err := DB.Exec(migration2).Error; err != nil {
 			return fmt.Errorf("failed to run migration 2: %w", err)
 		}
-		
+
 		// Mark migration as applied
 		if err := DB.Exec("INSERT INTO schema_migrations (version) VALUES (?)", "002_checkin_locations").Error; err != nil {
 			return fmt.Errorf("failed to mark migration 2 as applied: %w", err)
 		}
 	}
-	
+
+	// Migration 3: Update deactivated column to active (positive affirmation)
+	migration3 := `
+	-- Migration: Update deactivated column to active (positive affirmation)
+	-- This migration renames the deactivated column to active and inverts the boolean values
+
+	-- Step 1: Add the new active column
+	ALTER TABLE users ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT true;
+
+	-- Step 2: Update the active column based on deactivated values (invert the logic) - only if deactivated column exists
+	DO $$ 
+	BEGIN
+		IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'deactivated') THEN
+			UPDATE users SET active = NOT deactivated WHERE deactivated IS NOT NULL;
+		END IF;
+	END $$;
+
+	-- Step 3: Set default value for any NULL values
+	UPDATE users SET active = true WHERE active IS NULL;
+
+	-- Step 4: Make the active column NOT NULL
+	ALTER TABLE users ALTER COLUMN active SET NOT NULL;
+
+	-- Step 5: Drop the old deactivated column (only if it exists)
+	DO $$ 
+	BEGIN
+		IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'deactivated') THEN
+			ALTER TABLE users DROP COLUMN deactivated;
+		END IF;
+	END $$;
+
+	-- Step 6: Add index for performance
+	CREATE INDEX IF NOT EXISTS idx_users_active ON users(active);
+	`
+
+	// Check if migration 3 has been applied
+	DB.Model(&struct{}{}).Table("schema_migrations").Where("version = ?", "003_deactivated_to_active").Count(&count)
+
+	if count == 0 {
+		if err := DB.Exec(migration3).Error; err != nil {
+			return fmt.Errorf("failed to run migration 3: %w", err)
+		}
+
+		// Mark migration as applied
+		if err := DB.Exec("INSERT INTO schema_migrations (version) VALUES (?)", "003_deactivated_to_active").Error; err != nil {
+			return fmt.Errorf("failed to mark migration 3 as applied: %w", err)
+		}
+	}
+
+	// Migration 4: Add end_of_day_absence_detection column to users table
+	migration4 := `
+	-- Migration: Add end_of_day_absence_detection column to users table
+	-- This column allows HR to configure whether to auto-detect absences at end of day
+
+	-- Step 1: Add the new column
+	ALTER TABLE users ADD COLUMN IF NOT EXISTS end_of_day_absence_detection BOOLEAN DEFAULT false;
+
+	-- Step 2: Add index for performance
+	CREATE INDEX IF NOT EXISTS idx_users_end_of_day_absence_detection ON users(end_of_day_absence_detection);
+	`
+
+	// Check if migration 4 has been applied
+	DB.Model(&struct{}{}).Table("schema_migrations").Where("version = ?", "004_end_of_day_absence_detection").Count(&count)
+
+	if count == 0 {
+		if err := DB.Exec(migration4).Error; err != nil {
+			return fmt.Errorf("failed to run migration 4: %w", err)
+		}
+
+		// Mark migration as applied
+		if err := DB.Exec("INSERT INTO schema_migrations (version) VALUES (?)", "004_end_of_day_absence_detection").Error; err != nil {
+			return fmt.Errorf("failed to mark migration 4 as applied: %w", err)
+		}
+	}
+
 	return nil
 }
 

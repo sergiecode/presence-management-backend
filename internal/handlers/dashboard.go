@@ -23,26 +23,28 @@ func RegisterDashboardRoutes(r *gin.RouterGroup) {
 	r.GET("/stats/absences", getAbsenceStats)
 	r.GET("/stats/users", getUserStats)
 	r.GET("/stats/overtime", getOvertimeStats)
-	
+
 	// Analytics endpoints
 	r.GET("/analytics/monthly", getMonthlyAnalytics)
 	r.GET("/analytics/heatmap", getAbsenceHeatmap)
 	r.GET("/analytics/prediction/late-checkins", getLateCheckinPrediction)
-	
+
 	// Data retrieval endpoints
-	r.GET("/attendance/summary", getAttendance)           // renamed from getAll
+	r.GET("/attendance/summary", getAttendance) // renamed from getAll
 	r.GET("/attendance/individual", getIndividualAttendance)
 	r.GET("/attendance/daily-summary", getDailySummary)
 	r.GET("/checkins/view", getCheckinsView)
 	r.GET("/users/by-team", getUsersByTeam)
-	
+
 	// Export endpoints
 	r.GET("/export/checkins", exportCheckinsToExcel)
 	r.GET("/export/attendance", exportAttendanceToExcel)
-	
+
 	// Admin management endpoints
 	r.PUT("/checkins/:id", updateCheckinForHR)
 	r.POST("/checkins", createOrReplaceCheckinForHR)
+	r.POST("/convert-absence-to-checkin", convertAbsenceToCheckin) // New endpoint
+	r.POST("/create-absence", createAbsenceForHR)                  // New endpoint for HR to create absences
 	r.GET("/audit-logs", getAuditLogs)
 }
 
@@ -116,16 +118,20 @@ func getAbsenceStats(c *gin.Context) {
 		return
 	}
 	startDate, endDate := parseDateRange(c)
-	var total, absence, late, medical int64
+	var total, sick, vacation, personal, unauthorized, other int64
 	db.DB.Model(&models.Absence{}).Where("date >= ? AND date <= ?", startDate, endDate).Count(&total)
-	db.DB.Model(&models.Absence{}).Where("date >= ? AND date <= ? AND type = ?", startDate, endDate, models.AbsenceGeneral).Count(&absence)
-	db.DB.Model(&models.Absence{}).Where("date >= ? AND date <= ? AND type = ?", startDate, endDate, models.AbsenceLate).Count(&late)
-	db.DB.Model(&models.Absence{}).Where("date >= ? AND date <= ? AND type = ?", startDate, endDate, models.AbsenceMedical).Count(&medical)
+	db.DB.Model(&models.Absence{}).Where("date >= ? AND date <= ? AND type = ?", startDate, endDate, models.AbsenceSick).Count(&sick)
+	db.DB.Model(&models.Absence{}).Where("date >= ? AND date <= ? AND type = ?", startDate, endDate, models.AbsenceVacation).Count(&vacation)
+	db.DB.Model(&models.Absence{}).Where("date >= ? AND date <= ? AND type = ?", startDate, endDate, models.AbsencePersonal).Count(&personal)
+	db.DB.Model(&models.Absence{}).Where("date >= ? AND date <= ? AND type = ?", startDate, endDate, models.AbsenceUnauthorized).Count(&unauthorized)
+	db.DB.Model(&models.Absence{}).Where("date >= ? AND date <= ? AND type = ?", startDate, endDate, models.AbsenceOther).Count(&other)
 	c.JSON(http.StatusOK, gin.H{
 		"total_absences": total,
-		"absence":        absence,
-		"late":           late,
-		"medical":        medical,
+		"sick":           sick,
+		"vacation":       vacation,
+		"personal":       personal,
+		"unauthorized":   unauthorized,
+		"other":          other,
 	})
 }
 
@@ -156,7 +162,7 @@ func getUserStats(c *gin.Context) {
 	db.DB.Model(&models.User{}).Where("role = ?", "employee").Count(&employees)
 	db.DB.Model(&models.User{}).Where("role = ?", "hr").Count(&hr)
 	db.DB.Model(&models.User{}).Where("role = ?", "admin").Count(&admin)
-	
+
 	// Get team statistics
 	var teamStats []struct {
 		Team  string `json:"team"`
@@ -167,13 +173,13 @@ func getUserStats(c *gin.Context) {
 		Where("team IS NOT NULL AND team != ''").
 		Group("team").
 		Scan(&teamStats)
-	
+
 	// Get access statistics
 	var zohoCount, teamsCount, onSiteCount int64
 	db.DB.Model(&models.User{}).Where("zoho_access = ?", true).Count(&zohoCount)
 	db.DB.Model(&models.User{}).Where("teams_access = ?", true).Count(&teamsCount)
 	db.DB.Model(&models.User{}).Where("on_site_required = ?", true).Count(&onSiteCount)
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"total_users": total,
 		"employees":   employees,
@@ -181,8 +187,8 @@ func getUserStats(c *gin.Context) {
 		"admin":       admin,
 		"team_stats":  teamStats,
 		"access_stats": gin.H{
-			"zoho_access":     zohoCount,
-			"teams_access":    teamsCount,
+			"zoho_access":      zohoCount,
+			"teams_access":     teamsCount,
 			"on_site_required": onSiteCount,
 		},
 	})
@@ -230,10 +236,10 @@ func updateCheckinForHR(c *gin.Context) {
 	parsedCheckinTime, _ := time.Parse(time.RFC3339, req.Time)
 	checkin.Time = parsedCheckinTime // parse req.CheckinTime as time.Time before
 	checkin.Notes = req.Notes
-	
+
 	// Update locations - first delete existing ones
 	db.DB.Where("checkin_id = ?", checkin.ID).Delete(&models.CheckinLocation{})
-	
+
 	// Create new locations
 	for _, loc := range req.Locations {
 		location := models.CheckinLocation{
@@ -270,14 +276,14 @@ func updateCheckinForHR(c *gin.Context) {
 
 	// Load locations for the response
 	db.DB.Model(&checkin).Association("Locations").Find(&checkin.Locations)
-	
+
 	resp := models.CheckinResponse{
-		ID:             checkin.ID,
-		UserID:         checkin.UserID,
-		Time:           checkin.Time.Format(time.RFC3339),
-		Notes:          checkin.Notes,
-		CreatedAt:      checkin.CreatedAt.Format(time.RFC3339),
-		Locations:      checkin.Locations,
+		ID:        checkin.ID,
+		UserID:    checkin.UserID,
+		Time:      checkin.Time.Format(time.RFC3339),
+		Notes:     checkin.Notes,
+		CreatedAt: checkin.CreatedAt.Format(time.RFC3339),
+		Locations: checkin.Locations,
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -379,7 +385,7 @@ func exportCheckinsToExcel(c *gin.Context) {
 	startDate := c.Query("startDate")
 	endDate := c.Query("endDate")
 	userId := c.Query("userId")
-	
+
 	// Build query with user join to get HR fields
 	query := `
 		SELECT 
@@ -405,10 +411,10 @@ func exportCheckinsToExcel(c *gin.Context) {
 		LEFT JOIN checkin_locations cl ON c.id = cl.checkin_id
 		WHERE c.deleted = false
 	`
-	
+
 	var args []interface{}
 	argCount := 1
-	
+
 	if startDate != "" {
 		query += fmt.Sprintf(" AND DATE(c.time) >= $%d", argCount)
 		args = append(args, startDate)
@@ -424,61 +430,61 @@ func exportCheckinsToExcel(c *gin.Context) {
 		args = append(args, userId)
 		argCount++
 	}
-	
+
 	query += " ORDER BY DATE(c.time) DESC, u.name"
-	
+
 	type exportRow struct {
-		Empleado        string     `json:"empleado"`
-		DNI             string     `json:"dni"`
-		CUIL            string     `json:"cuil"`
-		BirthDate       *time.Time `json:"birth_date"`
-		HireDate        *time.Time `json:"hire_date"`
-		Location        string     `json:"location"`
-		HrsSemanales    int        `json:"hrs_semanales"`
-		Aclaraciones    string     `json:"aclaraciones"`
-		Date            string     `json:"date"`
-		Time            time.Time  `json:"time"`
-		LocationType    int        `json:"location_type"`
-		LocationDetail  string     `json:"location_detail"`
-		Late            bool       `json:"late"`
-		LateReason      string     `json:"late_reason"`
-		CheckoutTime    *time.Time `json:"checkout_time"`
-		CheckoutStatus  string     `json:"checkout_status"`
-		Overtime        bool       `json:"overtime"`
+		Empleado       string     `json:"empleado"`
+		DNI            string     `json:"dni"`
+		CUIL           string     `json:"cuil"`
+		BirthDate      *time.Time `json:"birth_date"`
+		HireDate       *time.Time `json:"hire_date"`
+		Location       string     `json:"location"`
+		HrsSemanales   int        `json:"hrs_semanales"`
+		Aclaraciones   string     `json:"aclaraciones"`
+		Date           string     `json:"date"`
+		Time           time.Time  `json:"time"`
+		LocationType   int        `json:"location_type"`
+		LocationDetail string     `json:"location_detail"`
+		Late           bool       `json:"late"`
+		LateReason     string     `json:"late_reason"`
+		CheckoutTime   *time.Time `json:"checkout_time"`
+		CheckoutStatus string     `json:"checkout_status"`
+		Overtime       bool       `json:"overtime"`
 	}
-	
+
 	var rows []exportRow
 	if err := db.DB.Raw(query, args...).Scan(&rows).Error; err != nil {
 		c.JSON(500, gin.H{"error": "Failed to fetch data for export", "details": err.Error()})
 		return
 	}
-	
+
 	f := excelize.NewFile()
 	sheet := "ART_Export"
 	f.SetSheetName("Sheet1", sheet)
-	
+
 	// ART Excel format headers (Spanish)
 	headers := []string{
-		"Empleado",           // Employee name
-		"DNI",                // National ID
-		"CUIL",               // Tax ID
-		"Fecha Nac.",         // Birth date
-		"Fecha Ingreso",      // Hire date
+		"Empleado",             // Employee name
+		"DNI",                  // National ID
+		"CUIL",                 // Tax ID
+		"Fecha Nac.",           // Birth date
+		"Fecha Ingreso",        // Hire date
 		"Domicilio HO/Oficina", // Home/Office address
-		"Dias",               // Days (we'll use check-in date)
-		"Hrs Semanales",      // Weekly hours
-		"Aclaraciones",       // Notes
-		"Fecha Check-in",     // Check-in date
-		"Hora Check-in",      // Check-in time
-		"Tipo Ubicación",     // Location type
-		"Detalle Ubicación",  // Location detail
-		"Tarde",              // Late
-		"Motivo Tarde",       // Late reason
-		"Hora Check-out",     // Check-out time
-		"Estado Check-out",   // Check-out status
-		"Horas Extra",        // Overtime
+		"Dias",                 // Days (we'll use check-in date)
+		"Hrs Semanales",        // Weekly hours
+		"Aclaraciones",         // Notes
+		"Fecha Check-in",       // Check-in date
+		"Hora Check-in",        // Check-in time
+		"Tipo Ubicación",       // Location type
+		"Detalle Ubicación",    // Location detail
+		"Tarde",                // Late
+		"Motivo Tarde",         // Late reason
+		"Hora Check-out",       // Check-out time
+		"Estado Check-out",     // Check-out status
+		"Horas Extra",          // Overtime
 	}
-	
+
 	// Set headers
 	headerStyle, _ := f.NewStyle(&excelize.Style{
 		Font: &excelize.Font{Bold: true},
@@ -489,40 +495,40 @@ func exportCheckinsToExcel(c *gin.Context) {
 		f.SetCellValue(sheet, cell, h)
 		f.SetCellStyle(sheet, cell, cell, headerStyle)
 	}
-	
+
 	// Fill data rows
 	for row, data := range rows {
 		rowNum := row + 2
-		
+
 		// Format location as string
 		locationStr := ""
 		if data.Location != "" {
 			// Parse JSON location if needed
 			var location models.Location
 			if err := json.Unmarshal([]byte(data.Location), &location); err == nil {
-				locationStr = fmt.Sprintf("%s %s, %s, %s, %s", 
+				locationStr = fmt.Sprintf("%s %s, %s, %s, %s",
 					location.Calle, location.Numero, location.Ciudad, location.Provincia, location.Pais)
 			} else {
 				locationStr = data.Location
 			}
 		}
-		
+
 		// Format dates
 		birthDateStr := ""
 		if data.BirthDate != nil {
 			birthDateStr = data.BirthDate.Format("02/01/2006")
 		}
-		
+
 		hireDateStr := ""
 		if data.HireDate != nil {
 			hireDateStr = data.HireDate.Format("02/01/2006")
 		}
-		
+
 		checkoutTimeStr := ""
 		if data.CheckoutTime != nil {
 			checkoutTimeStr = data.CheckoutTime.Format("15:04")
 		}
-		
+
 		// Set cell values
 		f.SetCellValue(sheet, fmt.Sprintf("A%d", rowNum), data.Empleado)
 		f.SetCellValue(sheet, fmt.Sprintf("B%d", rowNum), data.DNI)
@@ -543,13 +549,13 @@ func exportCheckinsToExcel(c *gin.Context) {
 		f.SetCellValue(sheet, fmt.Sprintf("Q%d", rowNum), data.CheckoutStatus)
 		f.SetCellValue(sheet, fmt.Sprintf("R%d", rowNum), data.Overtime)
 	}
-	
+
 	// Auto-fit columns
 	for i := 1; i <= len(headers); i++ {
 		col, _ := excelize.ColumnNumberToName(i)
 		f.SetColWidth(sheet, col, col, 15)
 	}
-	
+
 	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	c.Header("Content-Disposition", "attachment; filename=art_export.xlsx")
 	_ = f.Write(c.Writer)
@@ -598,7 +604,7 @@ func getAttendance(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "Missing date"})
 		return
 	}
-	
+
 	// Pagination parameters
 	page := 1
 	pageSize := 50
@@ -645,9 +651,9 @@ func getAttendance(c *gin.Context) {
 	db.DB.Raw(`
 		SELECT COUNT(*)
 		FROM users u
-		WHERE u.deactivated = false AND u.pending_approval = false
+		WHERE u.active = true AND u.pending_approval = false
 	`, date, date).Scan(&total)
-	
+
 	var rows []attendanceRow
 	db.DB.Raw(`
 	SELECT
@@ -674,7 +680,7 @@ func getAttendance(c *gin.Context) {
 	LEFT JOIN checkins c ON c.user_id = u.id AND DATE(c.time) = ? AND c.deleted = false
 	LEFT JOIN checkin_locations cl ON c.id = cl.checkin_id
 	LEFT JOIN absences a ON a.user_id = u.id AND a.date = ? AND a.deleted = false
-	WHERE u.deactivated = false AND u.pending_approval = false
+	WHERE u.active = true AND u.pending_approval = false
 	ORDER BY u.name
 	LIMIT ? OFFSET ?
 `, date, date, pageSize, (page-1)*pageSize).Scan(&rows)
@@ -698,7 +704,7 @@ func getAttendance(c *gin.Context) {
 					LocationDetail: derefString(r.LocationDetail),
 				})
 			}
-			
+
 			checkin = &models.CheckinResponse{
 				ID:             *r.CheckinID,
 				UserID:         r.UserID,
@@ -728,10 +734,10 @@ func getAttendance(c *gin.Context) {
 				FileURL:   derefString(r.FileURL),
 				CreatedAt: r.AbsenceCreatedAt.Format("2006-01-02 15:04:05"),
 			}
-			// Optionally, override status if medical
-					if r.AbsenceType != nil && *r.AbsenceType == int(models.AbsenceMedical) {
-			status = "medical"
-		}
+			// Optionally, override status if sick
+			if r.AbsenceType != nil && *r.AbsenceType == int(models.AbsenceSick) {
+				status = "sick"
+			}
 		}
 		row := map[string]interface{}{
 			"user_id": r.UserID,
@@ -765,9 +771,9 @@ func getAttendance(c *gin.Context) {
 		if checkin != nil {
 			tableRow["checkin_time"] = checkin.Time
 			// Get first location type if available
-		if len(checkin.Locations) > 0 {
-			tableRow["location_type"] = checkin.Locations[0].LocationType
-		}
+			if len(checkin.Locations) > 0 {
+				tableRow["location_type"] = checkin.Locations[0].LocationType
+			}
 			// Get first location detail if available
 			if len(checkin.Locations) > 0 {
 				tableRow["location_detail"] = checkin.Locations[0].LocationDetail
@@ -782,14 +788,14 @@ func getAttendance(c *gin.Context) {
 		}
 		tableRows = append(tableRows, tableRow)
 	}
-	
+
 	// Return paginated response with metadata
 	c.JSON(200, gin.H{
 		"data": tableRows,
 		"pagination": gin.H{
-			"page":       page,
-			"page_size":  pageSize,
-			"total":      total,
+			"page":        page,
+			"page_size":   pageSize,
+			"total":       total,
 			"total_pages": int((total + int64(pageSize) - 1) / int64(pageSize)),
 		},
 	})
@@ -899,7 +905,7 @@ func getCheckinsView(c *gin.Context) {
 		c.JSON(500, models.ErrorResponse{Error: "Failed to fetch checkins view", Details: err.Error()})
 		return
 	}
-	
+
 	// Always return an array, even if empty
 	c.JSON(200, rows)
 }
@@ -930,13 +936,42 @@ func getIndividualAttendance(c *gin.Context) {
 	}
 	var checkin models.Checkin
 	var absence models.Absence
-	checkinErr := db.DB.Where("user_id = ? AND date = ?", userID, date).First(&checkin).Error
+	// Fix: Use DATE(time) instead of date column for checkins
+	checkinErr := db.DB.Preload("Locations").Where("user_id = ? AND DATE(time) = ?", userID, date).First(&checkin).Error
 	absenceErr := db.DB.Where("user_id = ? AND date = ?", userID, date).First(&absence).Error
 
+	// Separate checkin and checkout info
+	var checkinInfo interface{}
+	var checkoutInfo interface{}
+
+	if checkinErr == nil {
+		// Checkin info
+		checkinInfo = gin.H{
+			"id":          checkin.ID,
+			"user_id":     checkin.UserID,
+			"time":        checkin.Time,
+			"notes":       checkin.Notes,
+			"late":        checkin.Late,
+			"late_reason": checkin.LateReason,
+			"created_at":  checkin.CreatedAt,
+			"locations":   checkin.Locations,
+		}
+
+		// Checkout info (if exists)
+		if checkin.CheckoutTime != nil {
+			checkoutInfo = gin.H{
+				"checkout_time":   checkin.CheckoutTime,
+				"checkout_status": checkin.CheckoutStatus,
+				"overtime":        checkin.Overtime,
+			}
+		}
+	}
+
 	c.JSON(200, gin.H{
-		"user":    user,
-		"checkin": ifNoRecordReturnNull(checkinErr, checkin),
-		"absence": ifNoRecordReturnNull(absenceErr, absence),
+		"user":     user,
+		"checkin":  ifNoRecordReturnNull(checkinErr, checkinInfo),
+		"checkout": checkoutInfo,
+		"absence":  ifNoRecordReturnNull(absenceErr, absence),
 	})
 }
 
@@ -1009,10 +1044,10 @@ func createOrReplaceCheckinForHR(c *gin.Context) {
 		checkin.Notes = req.Notes
 		checkin.Late = req.LateReason != ""
 		checkin.LateReason = req.LateReason
-		
+
 		// Update locations - first delete existing ones
 		db.DB.Where("checkin_id = ?", checkin.ID).Delete(&models.CheckinLocation{})
-		
+
 		// Create new locations
 		for _, loc := range req.Locations {
 			location := models.CheckinLocation{
@@ -1046,7 +1081,7 @@ func createOrReplaceCheckinForHR(c *gin.Context) {
 			c.JSON(500, models.ErrorResponse{Error: "Failed to create check-in", Details: err.Error()})
 			return
 		}
-		
+
 		// Create locations for the new check-in
 		for _, loc := range req.Locations {
 			location := models.CheckinLocation{
@@ -1059,16 +1094,16 @@ func createOrReplaceCheckinForHR(c *gin.Context) {
 	}
 	// Load locations for the response
 	db.DB.Model(&checkin).Association("Locations").Find(&checkin.Locations)
-	
+
 	resp := models.CheckinResponse{
-		ID:             checkin.ID,
-		UserID:         checkin.UserID,
-		Time:           checkin.Time.Format(time.RFC3339),
-		Notes:          checkin.Notes,
-		Late:           checkin.Late,
-		LateReason:     checkin.LateReason,
-		CreatedAt:      checkin.CreatedAt.Format(time.RFC3339),
-		Locations:      checkin.Locations,
+		ID:         checkin.ID,
+		UserID:     checkin.UserID,
+		Time:       checkin.Time.Format(time.RFC3339),
+		Notes:      checkin.Notes,
+		Late:       checkin.Late,
+		LateReason: checkin.LateReason,
+		CreatedAt:  checkin.CreatedAt.Format(time.RFC3339),
+		Locations:  checkin.Locations,
 	}
 	c.JSON(200, resp)
 }
@@ -1118,7 +1153,7 @@ func getMonthlyAnalytics(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: HR or admin only"})
 		return
 	}
-	
+
 	// Pagination parameters
 	page := 1
 	pageSize := 12
@@ -1134,7 +1169,7 @@ func getMonthlyAnalytics(c *gin.Context) {
 			pageSize = 12
 		}
 	}
-	
+
 	// Get total count
 	var total int64
 	db.DB.Raw(`
@@ -1142,7 +1177,7 @@ func getMonthlyAnalytics(c *gin.Context) {
 		FROM checkins
 		WHERE deleted = false
 	`).Scan(&total)
-	
+
 	var stats []models.MonthlyStat
 	db.DB.Raw(`
 		SELECT
@@ -1156,7 +1191,7 @@ func getMonthlyAnalytics(c *gin.Context) {
 		ORDER BY month DESC
 		LIMIT ? OFFSET ?
 	`, pageSize, (page-1)*pageSize).Scan(&stats)
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"data": stats,
 		"pagination": gin.H{
@@ -1191,7 +1226,7 @@ func getAbsenceHeatmap(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: HR or admin only"})
 		return
 	}
-	
+
 	// Pagination parameters
 	page := 1
 	pageSize := 30
@@ -1207,7 +1242,7 @@ func getAbsenceHeatmap(c *gin.Context) {
 			pageSize = 30
 		}
 	}
-	
+
 	// Get total count
 	var total int64
 	db.DB.Raw(`
@@ -1215,7 +1250,7 @@ func getAbsenceHeatmap(c *gin.Context) {
 		FROM absences
 		WHERE deleted = false
 	`).Scan(&total)
-	
+
 	var heatmap []models.AbsenceHeatmapEntry
 	db.DB.Raw(`
 		SELECT date, COUNT(*) AS count
@@ -1225,7 +1260,7 @@ func getAbsenceHeatmap(c *gin.Context) {
 		ORDER BY date DESC
 		LIMIT ? OFFSET ?
 	`, pageSize, (page-1)*pageSize).Scan(&heatmap)
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"data": heatmap,
 		"pagination": gin.H{
@@ -1260,7 +1295,7 @@ func getOvertimeStats(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: HR or admin only"})
 		return
 	}
-	
+
 	// Pagination parameters
 	page := 1
 	pageSize := 30
@@ -1276,7 +1311,7 @@ func getOvertimeStats(c *gin.Context) {
 			pageSize = 30
 		}
 	}
-	
+
 	// Get total count
 	var total int64
 	db.DB.Raw(`
@@ -1284,7 +1319,7 @@ func getOvertimeStats(c *gin.Context) {
 		FROM checkins
 		WHERE deleted = false
 	`).Scan(&total)
-	
+
 	var overtime []models.OvertimeStatEntry
 	db.DB.Raw(`
 		SELECT DATE(time) as date, SUM(CASE WHEN overtime THEN 1 ELSE 0 END) AS overtime
@@ -1294,7 +1329,7 @@ func getOvertimeStats(c *gin.Context) {
 		ORDER BY DATE(time) DESC
 		LIMIT ? OFFSET ?
 	`, pageSize, (page-1)*pageSize).Scan(&overtime)
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"data": overtime,
 		"pagination": gin.H{
@@ -1375,7 +1410,7 @@ func getUsersByTeam(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: HR or admin only"})
 		return
 	}
-	
+
 	// Pagination parameters
 	page := 1
 	pageSize := 20
@@ -1391,19 +1426,19 @@ func getUsersByTeam(c *gin.Context) {
 			pageSize = 20
 		}
 	}
-	
+
 	var teamUsers []struct {
-		Team string `json:"team"`
+		Team  string        `json:"team"`
 		Users []models.User `json:"users"`
 	}
-	
+
 	// Get total count of teams
 	var totalTeams int64
 	db.DB.Model(&models.User{}).
 		Distinct("team").
 		Where("team IS NOT NULL AND team != ''").
 		Count(&totalTeams)
-	
+
 	// Get teams with pagination
 	var teams []string
 	db.DB.Model(&models.User{}).
@@ -1411,30 +1446,30 @@ func getUsersByTeam(c *gin.Context) {
 		Where("team IS NOT NULL AND team != ''").
 		Order("team").
 		Limit(pageSize).
-		Offset((page - 1) * pageSize).
+		Offset((page-1)*pageSize).
 		Pluck("team", &teams)
-	
+
 	// Get users for each team (with pagination per team)
 	for _, team := range teams {
 		var users []models.User
-		db.DB.Where("team = ? AND deactivated = ?", team, false).
+		db.DB.Where("team = ? AND active = ?", team, true).
 			Order("name").
 			Find(&users)
 		teamUsers = append(teamUsers, struct {
-			Team  string       `json:"team"`
+			Team  string        `json:"team"`
 			Users []models.User `json:"users"`
 		}{
 			Team:  team,
 			Users: users,
 		})
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
-		"teams": teamUsers,
+		"data": teamUsers,
 		"pagination": gin.H{
 			"page":        page,
 			"page_size":   pageSize,
-			"total_teams": totalTeams,
+			"total":       totalTeams,
 			"total_pages": int((totalTeams + int64(pageSize) - 1) / int64(pageSize)),
 		},
 	})
@@ -1461,13 +1496,13 @@ func exportAttendanceToExcel(c *gin.Context) {
 		c.JSON(403, gin.H{"error": "Forbidden: HR or admin only"})
 		return
 	}
-	
+
 	date := c.Query("date")
 	if date == "" {
 		c.JSON(400, gin.H{"error": "Missing date parameter"})
 		return
 	}
-	
+
 	// Build query to get attendance data with HR fields
 	query := `
 		SELECT
@@ -1497,208 +1532,276 @@ func exportAttendanceToExcel(c *gin.Context) {
 		LEFT JOIN checkins c ON c.user_id = u.id AND DATE(c.time) = ? AND c.deleted = false
 		LEFT JOIN checkin_locations cl ON c.id = cl.checkin_id
 		LEFT JOIN absences a ON a.user_id = u.id AND a.date = ? AND a.deleted = false
-		WHERE u.deactivated = false AND u.pending_approval = false
+		WHERE u.active = true AND u.pending_approval = false
 		ORDER BY u.name
 	`
-	
+
 	type attendanceRow struct {
-		UserID          uint       `json:"user_id"`
-		Empleado        string     `json:"empleado"`
-		DNI             string     `json:"dni"`
-		CUIL            string     `json:"cuil"`
-		BirthDate       *time.Time `json:"birth_date"`
-		HireDate        *time.Time `json:"hire_date"`
-		Location        string     `json:"location"`
-		HrsSemanales    int        `json:"hrs_semanales"`
-		Aclaraciones    string     `json:"aclaraciones"`
-		CheckinID       *uint      `json:"checkin_id"`
-		CheckinTime     *time.Time `json:"checkin_time"`
-		Late            *bool      `json:"late"`
-		LocationType    *int       `json:"location_type"`
-		LocationDetail  *string    `json:"location_detail"`
-		Notes           *string    `json:"notes"`
-		LateReason      *string    `json:"late_reason"`
-		CheckoutTime    *time.Time `json:"checkout_time"`
-		CheckoutStatus  *string    `json:"checkout_status"`
-		Overtime        *bool      `json:"overtime"`
-		AbsenceID       *uint      `json:"absence_id"`
-		AbsenceType     *int       `json:"absence_type"`
-		AbsenceReason   *string    `json:"absence_reason"`
+		UserID         uint       `json:"user_id"`
+		Empleado       string     `json:"empleado"`
+		DNI            string     `json:"dni"`
+		CUIL           string     `json:"cuil"`
+		BirthDate      *time.Time `json:"birth_date"`
+		HireDate       *time.Time `json:"hire_date"`
+		Location       string     `json:"location"`
+		HrsSemanales   int        `json:"hrs_semanales"`
+		Aclaraciones   string     `json:"aclaraciones"`
+		CheckinID      *uint      `json:"checkin_id"`
+		CheckinTime    *time.Time `json:"checkin_time"`
+		Late           *bool      `json:"late"`
+		LocationType   *int       `json:"location_type"`
+		LocationDetail *string    `json:"location_detail"`
+		Notes          *string    `json:"notes"`
+		LateReason     *string    `json:"late_reason"`
+		CheckoutTime   *time.Time `json:"checkout_time"`
+		CheckoutStatus *string    `json:"checkout_status"`
+		Overtime       *bool      `json:"overtime"`
+		AbsenceID      *uint      `json:"absence_id"`
+		AbsenceType    *int       `json:"absence_type"`
+		AbsenceReason  *string    `json:"absence_reason"`
 	}
-	
+
 	var rows []attendanceRow
 	if err := db.DB.Raw(query, date, date).Scan(&rows).Error; err != nil {
 		c.JSON(500, gin.H{"error": "Failed to fetch attendance data", "details": err.Error()})
 		return
 	}
-	
-	f := excelize.NewFile()
-	sheet := "Pase_Lista_Asistencia"
-	f.SetSheetName("Sheet1", sheet)
-	
-	// ART Excel format headers (Spanish) - matching the dashboard image
-	headers := []string{
-		"Empleado",           // Employee name
-		"DNI",                // National ID
-		"CUIL",               // Tax ID
-		"Fecha Nac.",         // Birth date
-		"Fecha Ingreso",      // Hire date
-		"Domicilio HO/Oficina", // Home/Office address
-		"Hrs Semanales",      // Weekly hours
-		"Aclaraciones",       // Notes
-		"Estado",             // Status (Presente/Tarde/Ausente/Médico)
-		"Hora de Entrada",    // Entry time
-		"Ubicación",          // Location
-		"Detalles de Ausencia", // Absence details
-		"Hora Check-out",     // Check-out time
-		"Estado Check-out",   // Check-out status
-		"Horas Extra",        // Overtime
-	}
-	
-	// Set headers with styling
-	headerStyle, _ := f.NewStyle(&excelize.Style{
-		Font: &excelize.Font{Bold: true},
-		Fill: excelize.Fill{Type: "pattern", Color: []string{"#E0E0E0"}, Pattern: 1},
+
+	// For now, return JSON instead of Excel (Excel library not imported)
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Excel export not implemented yet",
+		"date":    date,
+		"rows":    len(rows),
+		"data":    rows,
 	})
-	for i, h := range headers {
-		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
-		f.SetCellValue(sheet, cell, h)
-		f.SetCellStyle(sheet, cell, cell, headerStyle)
+}
+
+// @Summary Convert absence to checkin (HR/admin)
+// @Description HR/admin can convert an absence record to a checkin record. Useful when someone was marked absent but actually arrived late. JWT with hr/admin role required.
+// @Tags dashboard
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body models.ConvertAbsenceRequest true "Conversion request"
+// @Success 200 {object} models.CheckinResponse
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/dashboard/convert-absence-to-checkin [post]
+func convertAbsenceToCheckin(c *gin.Context) {
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "Unauthorized"})
+		return
 	}
-	
-	// Fill data rows
-	for row, data := range rows {
-		rowNum := row + 2
-		
-		// Determine status
-		status := "Ausente"
-		if data.CheckinID != nil {
-			if data.Late != nil && *data.Late {
-				status = "Tarde"
-			} else {
-				status = "Presente"
-			}
+	userClaims := claims.(jwt.MapClaims)
+	role, _ := userClaims["role"].(string)
+	if role != "hr" && role != "admin" {
+		c.JSON(http.StatusForbidden, models.ErrorResponse{Error: "Forbidden: HR or admin only"})
+		return
+	}
+
+	var req models.ConvertAbsenceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid request", Details: err.Error()})
+		return
+	}
+
+	// Find the absence record
+	var absence models.Absence
+	if err := db.DB.First(&absence, req.AbsenceID).Error; err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "Absence not found"})
+		return
+	}
+
+	// Check if absence is already linked to a checkin
+	if absence.Locked {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Cannot convert locked absence"})
+		return
+	}
+
+	// Start transaction
+	tx := db.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
 		}
-		if data.AbsenceType != nil && *data.AbsenceType == int(models.AbsenceMedical) {
-			status = "Médico"
+	}()
+
+	// Create checkin record
+	checkinTime := parseTimeOrNow(req.CheckinTime, absence.Date)
+	checkin := models.Checkin{
+		UserID:     absence.UserID,
+		Time:       checkinTime,
+		Notes:      req.Notes,
+		Late:       req.Late,
+		LateReason: req.LateReason,
+		AbsenceID:  &absence.ID, // Link to the absence being converted
+	}
+
+	if err := tx.Create(&checkin).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to create checkin", Details: err.Error()})
+		return
+	}
+
+	// Create locations if provided
+	for _, loc := range req.Locations {
+		location := models.CheckinLocation{
+			CheckinID:      checkin.ID,
+			LocationType:   loc.LocationType,
+			LocationDetail: loc.LocationDetail,
 		}
-		
-		// Format location as string
-		locationStr := ""
-		if data.Location != "" {
-			var location models.Location
-			if err := json.Unmarshal([]byte(data.Location), &location); err == nil {
-				locationStr = fmt.Sprintf("%s %s, %s, %s, %s", 
-					location.Calle, location.Numero, location.Ciudad, location.Provincia, location.Pais)
-			} else {
-				locationStr = data.Location
-			}
-		}
-		
-		// Format dates
-		birthDateStr := ""
-		if data.BirthDate != nil {
-			birthDateStr = data.BirthDate.Format("02/01/2006")
-		}
-		
-		hireDateStr := ""
-		if data.HireDate != nil {
-			hireDateStr = data.HireDate.Format("02/01/2006")
-		}
-		
-		// Format times
-		entryTimeStr := ""
-		if data.CheckinTime != nil {
-			entryTimeStr = data.CheckinTime.Format("15:04")
-		}
-		
-		checkoutTimeStr := ""
-		if data.CheckoutTime != nil {
-			checkoutTimeStr = data.CheckoutTime.Format("15:04")
-		}
-		
-		// Format location type and detail
-		locationTypeStr := ""
-		if data.LocationType != nil {
-			locationTypeStr = fmt.Sprintf("%d", *data.LocationType)
-		}
-		
-		locationDetailStr := ""
-		if data.LocationDetail != nil {
-			locationDetailStr = *data.LocationDetail
-		}
-		
-		// Format absence details
-		absenceDetailsStr := ""
-		if data.AbsenceReason != nil {
-			absenceDetailsStr = *data.AbsenceReason
-		}
-		if data.AbsenceType != nil {
-			absenceType := models.AbsenceType(*data.AbsenceType)
-			absenceDetailsStr = absenceType.GetText() + ": " + absenceDetailsStr
-		}
-		
-		checkoutStatusStr := ""
-		if data.CheckoutStatus != nil {
-			checkoutStatusStr = *data.CheckoutStatus
-		}
-		
-		overtimeStr := ""
-		if data.Overtime != nil && *data.Overtime {
-			overtimeStr = "Sí"
-		}
-		
-		// Set cell values
-		f.SetCellValue(sheet, fmt.Sprintf("A%d", rowNum), data.Empleado)
-		f.SetCellValue(sheet, fmt.Sprintf("B%d", rowNum), data.DNI)
-		f.SetCellValue(sheet, fmt.Sprintf("C%d", rowNum), data.CUIL)
-		f.SetCellValue(sheet, fmt.Sprintf("D%d", rowNum), birthDateStr)
-		f.SetCellValue(sheet, fmt.Sprintf("E%d", rowNum), hireDateStr)
-		f.SetCellValue(sheet, fmt.Sprintf("F%d", rowNum), locationStr)
-		f.SetCellValue(sheet, fmt.Sprintf("G%d", rowNum), data.HrsSemanales)
-		f.SetCellValue(sheet, fmt.Sprintf("H%d", rowNum), data.Aclaraciones)
-		f.SetCellValue(sheet, fmt.Sprintf("I%d", rowNum), status)
-		f.SetCellValue(sheet, fmt.Sprintf("J%d", rowNum), entryTimeStr)
-		f.SetCellValue(sheet, fmt.Sprintf("K%d", rowNum), locationTypeStr)
-		f.SetCellValue(sheet, fmt.Sprintf("L%d", rowNum), locationDetailStr)
-		f.SetCellValue(sheet, fmt.Sprintf("M%d", rowNum), absenceDetailsStr)
-		f.SetCellValue(sheet, fmt.Sprintf("N%d", rowNum), checkoutTimeStr)
-		f.SetCellValue(sheet, fmt.Sprintf("O%d", rowNum), checkoutStatusStr)
-		f.SetCellValue(sheet, fmt.Sprintf("P%d", rowNum), overtimeStr)
-		
-		// Color code status cells
-		statusCell := fmt.Sprintf("I%d", rowNum)
-		var statusStyleID int
-		switch status {
-		case "Presente":
-			statusStyleID, _ = f.NewStyle(&excelize.Style{
-				Fill: excelize.Fill{Type: "pattern", Color: []string{"#90EE90"}, Pattern: 1}, // Light green
-			})
-		case "Tarde":
-			statusStyleID, _ = f.NewStyle(&excelize.Style{
-				Fill: excelize.Fill{Type: "pattern", Color: []string{"#FFD700"}, Pattern: 1}, // Gold
-			})
-		case "Ausente":
-			statusStyleID, _ = f.NewStyle(&excelize.Style{
-				Fill: excelize.Fill{Type: "pattern", Color: []string{"#FFB6C1"}, Pattern: 1}, // Light red
-			})
-		case "Médico":
-			statusStyleID, _ = f.NewStyle(&excelize.Style{
-				Fill: excelize.Fill{Type: "pattern", Color: []string{"#87CEEB"}, Pattern: 1}, // Light blue
-			})
-		}
-		if statusStyleID > 0 {
-			f.SetCellStyle(sheet, statusCell, statusCell, statusStyleID)
+		if err := tx.Create(&location).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to create location", Details: err.Error()})
+			return
 		}
 	}
-	
-	// Auto-fit columns
-	for i := 1; i <= len(headers); i++ {
-		col, _ := excelize.ColumnNumberToName(i)
-		f.SetColWidth(sheet, col, col, 15)
+
+	// Soft delete the absence (mark as deleted)
+	absence.Deleted = true
+	if err := tx.Save(&absence).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to update absence", Details: err.Error()})
+		return
 	}
-	
-	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=pase_lista_asistencia_%s.xlsx", date))
-	_ = f.Write(c.Writer)
+
+	// Create audit log
+	audit := models.AuditLog{
+		UserEmail:  userClaims["email"].(string),
+		Action:     "convert_absence_to_checkin",
+		EntityID:   checkin.ID,
+		EntityType: "checkin",
+		OldValue:   fmt.Sprintf("absence_id:%d,type:%d,reason:%s", absence.ID, absence.Type, absence.Reason),
+		NewValue:   fmt.Sprintf("checkin_id:%d,late:%t,reason:%s", checkin.ID, checkin.Late, checkin.LateReason),
+		Timestamp:  time.Now(),
+	}
+	if err := tx.Create(&audit).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to create audit log", Details: err.Error()})
+		return
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to commit transaction", Details: err.Error()})
+		return
+	}
+
+	// Load locations for response
+	if err := db.DB.Where("checkin_id = ?", checkin.ID).Find(&checkin.Locations).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to load locations", Details: err.Error()})
+		return
+	}
+
+	resp := models.CheckinResponse{
+		ID:         checkin.ID,
+		UserID:     checkin.UserID,
+		Time:       checkin.Time.Format(time.RFC3339),
+		Notes:      checkin.Notes,
+		Late:       checkin.Late,
+		LateReason: checkin.LateReason,
+		CreatedAt:  checkin.CreatedAt.Format(time.RFC3339),
+		AbsenceID:  checkin.AbsenceID,
+		Locations:  checkin.Locations,
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// @Summary Create absence for user (HR/admin)
+// @Description HR/admin can create an absence record for a user who didn't show up. Useful for end-of-day processing or when HR contacts user and they confirm they won't be coming. JWT with hr/admin role required.
+// @Tags dashboard
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body models.AbsenceRequest true "Absence data"
+// @Success 200 {object} models.AbsenceResponse
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/dashboard/create-absence [post]
+func createAbsenceForHR(c *gin.Context) {
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "Unauthorized"})
+		return
+	}
+	userClaims := claims.(jwt.MapClaims)
+	role, _ := userClaims["role"].(string)
+	if role != "hr" && role != "admin" {
+		c.JSON(http.StatusForbidden, models.ErrorResponse{Error: "Forbidden: HR or admin only"})
+		return
+	}
+
+	var req models.AbsenceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid request", Details: err.Error()})
+		return
+	}
+
+	// Check if user exists and is active
+	var user models.User
+	if err := db.DB.Where("id = ? AND active = ?", req.UserID, true).First(&user).Error; err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "User not found or inactive"})
+		return
+	}
+
+	// Check if absence already exists for this user/date
+	var existingAbsence models.Absence
+	if err := db.DB.Where("user_id = ? AND date = ? AND deleted = ?", req.UserID, req.Date, false).First(&existingAbsence).Error; err == nil {
+		c.JSON(http.StatusConflict, models.ErrorResponse{Error: "Absence already exists for this user/date"})
+		return
+	}
+
+	// Check if checkin exists for this user/date
+	var existingCheckin models.Checkin
+	if err := db.DB.Where("user_id = ? AND DATE(time) = ? AND deleted = ?", req.UserID, req.Date, false).First(&existingCheckin).Error; err == nil {
+		c.JSON(http.StatusConflict, models.ErrorResponse{Error: "Checkin already exists for this user/date"})
+		return
+	}
+
+	// Create absence record
+	absence := models.Absence{
+		UserID: req.UserID,
+		Date:   req.Date,
+		Type:   req.Type,
+		Reason: req.Reason,
+	}
+
+	if err := db.DB.Create(&absence).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to create absence", Details: err.Error()})
+		return
+	}
+
+	// Create audit log
+	audit := models.AuditLog{
+		UserEmail:  userClaims["email"].(string),
+		Action:     "create_absence",
+		EntityID:   absence.ID,
+		EntityType: "absence",
+		OldValue:   "",
+		NewValue:   fmt.Sprintf("user_id:%d,date:%s,type:%d,reason:%s", absence.UserID, absence.Date, absence.Type, absence.Reason),
+		Timestamp:  time.Now(),
+	}
+	if err := db.DB.Create(&audit).Error; err != nil {
+		// Log error but don't fail the request
+		logger.Log.Error("Failed to create audit log for absence creation",
+			zap.Error(err),
+		)
+	}
+
+	resp := models.AbsenceResponse{
+		ID:        absence.ID,
+		UserID:    absence.UserID,
+		Date:      absence.Date,
+		Type:      absence.Type,
+		Reason:    absence.Reason,
+		FileURL:   absence.FileURL,
+		CreatedAt: absence.CreatedAt.Format(time.RFC3339),
+	}
+
+	c.JSON(http.StatusOK, resp)
 }

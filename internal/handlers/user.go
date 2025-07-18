@@ -16,20 +16,20 @@ import (
 func RegisterUserRoutes(r *gin.RouterGroup) {
 	// Current user operations
 	r.GET("/me", getMe)
-	r.PATCH("/me", updateMyProfile)             // PATCH for partial updates
-	r.PUT("/me/checkin-config", updateMyCheckinConfig)  // Users can update their own config
-	
+	r.PATCH("/me", updateMyProfile)                    // PATCH for partial updates
+	r.PUT("/me/checkin-config", updateMyCheckinConfig) // Users can update their own config
+
 	// Admin user management
-	r.GET("/", listUsers)                       // GET /api/users
-	r.GET("/:id", getUserByID)                  // GET /api/users/:id
-	r.PUT("/:id", updateUser)                   // PUT /api/users/:id (full update)
-	r.DELETE("/:id", deleteUser)                // DELETE /api/users/:id
-	
+	r.GET("/", listUsers)        // GET /api/users
+	r.GET("/:id", getUserByID)   // GET /api/users/:id
+	r.PUT("/:id", updateUser)    // PUT /api/users/:id (full update)
+	r.DELETE("/:id", deleteUser) // DELETE /api/users/:id
+
 	// Admin user configuration - support both PUT and PATCH
 	r.PUT("/:id/checkin-config", updateUserCheckinConfig)
 	r.PATCH("/:id/checkin-config", updateUserCheckinConfig)
 	r.PUT("/:id/hr-details", updateUserHRDetails)
-	
+
 	// Admin user status management
 	r.PUT("/:id/approve", approveUser)
 	r.PUT("/:id/activate-email", activateUserEmail)
@@ -110,9 +110,9 @@ func listUsers(c *gin.Context) {
 			pageSize = 20
 		}
 	}
-	
-	query := db.DB.Where("deactivated = ? OR pending_approval = ?", false, true)
-	
+
+	query := db.DB.Where("active = ? OR pending_approval = ?", true, true)
+
 	// Apply filters
 	if team := c.Query("team"); team != "" {
 		query = query.Where("team = ?", team)
@@ -123,14 +123,14 @@ func listUsers(c *gin.Context) {
 	if onSiteRequired := c.Query("on_site_required"); onSiteRequired != "" {
 		query = query.Where("on_site_required = ?", onSiteRequired == "true")
 	}
-	
+
 	// Get total count
 	var total int64
 	query.Count(&total)
-	
+
 	var users []models.User
 	query.Offset((page - 1) * pageSize).Limit(pageSize).Find(&users)
-	
+
 	c.JSON(200, gin.H{
 		"data": users,
 		"pagination": gin.H{
@@ -167,8 +167,8 @@ func getUserByID(c *gin.Context) {
 	}
 	id := c.Param("id")
 	var user models.User
-	if err := db.DB.First(&user, id).Error; err != nil || user.Deactivated {
-		logger.Log.Error("User not found or deactivated",
+	if err := db.DB.First(&user, id).Error; err != nil || !user.Active {
+		logger.Log.Error("User not found or inactive",
 			zap.String("endpoint", c.FullPath()),
 			zap.String("method", c.Request.Method),
 			zap.String("user", getUserEmail(c)),
@@ -208,7 +208,7 @@ func updateUser(c *gin.Context) {
 	}
 	id := c.Param("id")
 	var user models.User
-	if err := db.DB.First(&user, id).Error; err != nil || user.Deactivated {
+	if err := db.DB.First(&user, id).Error; err != nil || !user.Active {
 		c.JSON(404, gin.H{"error": "User not found"})
 		return
 	}
@@ -314,11 +314,11 @@ func deleteUser(c *gin.Context) {
 	}
 	id := c.Param("id")
 	var user models.User
-	if err := db.DB.First(&user, id).Error; err != nil || user.Deactivated {
+	if err := db.DB.First(&user, id).Error; err != nil || !user.Active {
 		c.JSON(404, gin.H{"error": "User not found"})
 		return
 	}
-	user.Deactivated = true
+	user.Active = false
 	if err := db.DB.Save(&user).Error; err != nil {
 		c.JSON(500, gin.H{"error": "Failed to deactivate user", "details": err.Error()})
 		return
@@ -415,7 +415,7 @@ func approveUser(c *gin.Context) {
 		return
 	}
 	user.PendingApproval = false
-	user.Deactivated = false
+	user.Active = true
 	if err := db.DB.Save(&user).Error; err != nil {
 		c.JSON(500, gin.H{"error": "Failed to approve user"})
 		return
@@ -489,7 +489,7 @@ func updateUserHRDetails(c *gin.Context) {
 	}
 	id := c.Param("id")
 	var user models.User
-	if err := db.DB.First(&user, id).Error; err != nil || user.Deactivated {
+	if err := db.DB.First(&user, id).Error; err != nil || !user.Active {
 		c.JSON(404, gin.H{"error": "User not found"})
 		return
 	}
@@ -498,7 +498,7 @@ func updateUserHRDetails(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "Invalid request", "details": err.Error()})
 		return
 	}
-	
+
 	// Update fields if provided
 	if req.DNI != "" {
 		user.DNI = req.DNI
@@ -536,7 +536,7 @@ func updateUserHRDetails(c *gin.Context) {
 	if req.OfficeDays != "" {
 		user.OfficeDays = req.OfficeDays
 	}
-	
+
 	if err := db.DB.Save(&user).Error; err != nil {
 		logger.Log.Error("Failed to update user HR details",
 			zap.String("endpoint", c.FullPath()),

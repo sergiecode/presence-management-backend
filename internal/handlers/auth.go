@@ -73,7 +73,7 @@ func registerHandler(c *gin.Context) {
 		EmailConfirmed:    false,
 		ConfirmationToken: token,
 		PendingApproval:   true,
-		Deactivated:       true,
+		Active:            false,
 	}
 	if err := db.DB.Create(&user).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to create user", Details: err.Error()})
@@ -139,7 +139,7 @@ func confirmHandler(c *gin.Context) {
 	user.EmailConfirmed = true
 	user.ConfirmationToken = ""
 	user.PendingApproval = false
-	user.Deactivated = false
+	user.Active = true
 	if err := db.DB.Save(&user).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to confirm email", "details": err.Error()})
 		return
@@ -218,7 +218,7 @@ func loginHandler(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Account pending HR approval"})
 		return
 	}
-	if user.Deactivated {
+	if !user.Active {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Account deactivated"})
 		return
 	}

@@ -44,15 +44,15 @@ import (
 	"github.com/joho/godotenv"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
-	"golang.org/x/crypto/bcrypt"
 	"go.uber.org/zap"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func ensureAdminUser() {
 	// First, try to find any existing admin user
 	var admin models.User
 	err := db.DB.Where("email = ?", "admin@absti.com").First(&admin).Error
-	
+
 	if err == nil {
 		// Admin exists, ensure it's properly configured
 		needsUpdate := false
@@ -60,8 +60,8 @@ func ensureAdminUser() {
 			admin.PendingApproval = false
 			needsUpdate = true
 		}
-		if admin.Deactivated {
-			admin.Deactivated = false
+		if !admin.Active {
+			admin.Active = true
 			needsUpdate = true
 		}
 		if !admin.EmailConfirmed {
@@ -72,7 +72,7 @@ func ensureAdminUser() {
 			admin.Role = "admin"
 			needsUpdate = true
 		}
-		
+
 		if needsUpdate {
 			if err := db.DB.Save(&admin).Error; err != nil {
 				log.Printf("Failed to update admin user: %v", err)
@@ -84,13 +84,13 @@ func ensureAdminUser() {
 		}
 		return
 	}
-	
+
 	// Admin doesn't exist, create it
 	hash, err := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
 	if err != nil {
 		log.Fatalf("failed to hash admin password: %v", err)
 	}
-	
+
 	admin = models.User{
 		Email:           "admin@absti.com",
 		Name:            "Admin",
@@ -98,9 +98,9 @@ func ensureAdminUser() {
 		PasswordHash:    string(hash),
 		EmailConfirmed:  true,
 		PendingApproval: false,
-		Deactivated:     false,
+		Active:          true,
 	}
-	
+
 	if err := db.DB.Create(&admin).Error; err != nil {
 		log.Fatalf("failed to create admin user: %v", err)
 	}
@@ -142,27 +142,26 @@ func main() {
 	if err := db.DB.AutoMigrate(&models.User{}, &models.Checkin{}, &models.CheckinLocation{}, &models.Absence{}, &models.AuditLog{}, &models.RefreshToken{}); err != nil {
 		log.Fatalf("failed to migrate database: %v", err)
 	}
-	
+
 	// Run SQL migrations after tables are created
 	if err := db.RunSQLMigrations(); err != nil {
 		log.Fatalf("failed to run SQL migrations: %v", err)
 	}
 
-	// Add compound index for (user_id, date) if not exists
-	db.DB.Exec("CREATE INDEX IF NOT EXISTS idx_checkins_user_date ON checkins (user_id, date);")
+	// Note: Compound index for (user_id, date) would require DATE(time) function which needs to be IMMUTABLE
+	// For now, we'll rely on the existing indexes on user_id and time
 
 	ensureAdminUser()
-
 
 	r := gin.Default()
 
 	// Add recovery middleware to catch panics
 	r.Use(gin.Recovery())
-	
+
 	// Custom error handler middleware
 	r.Use(func(c *gin.Context) {
 		c.Next()
-		
+
 		// Check if there were any errors
 		if len(c.Errors) > 0 {
 			err := c.Errors.Last()
@@ -171,11 +170,11 @@ func main() {
 				zap.String("path", c.Request.URL.Path),
 				zap.Error(err.Err),
 			)
-			
+
 			// If no response has been written yet, return a proper error
 			if !c.Writer.Written() {
 				c.JSON(http.StatusInternalServerError, gin.H{
-					"error": "Internal server error",
+					"error":   "Internal server error",
 					"details": err.Error(),
 				})
 			}
@@ -201,7 +200,6 @@ func main() {
 	handlers.RegisterCheckinRoutes(auth.Group("/checkins"))
 	handlers.RegisterAbsenceRoutes(auth.Group("/absences"))
 	handlers.RegisterDashboardRoutes(auth.Group("/dashboard"))
-
 
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 

@@ -2,28 +2,23 @@ package models
 
 import "time"
 
+// AbsenceType represents the type of absence
 type AbsenceType int
 
 const (
-	AbsenceLicenciaMaternidad         AbsenceType = 1
-	AbsenceLicenciaEnfermedad         AbsenceType = 2
-	AbsenceAusenteEnfermedad          AbsenceType = 3
-	AbsenceAusenteEnfermedadFamiliar  AbsenceType = 4
-	AbsenceAusenteEstudio             AbsenceType = 5
-	AbsenceAusenteDuelo               AbsenceType = 6
-	AbsenceDiaMudanza                 AbsenceType = 7
-	AbsenceVacaciones                 AbsenceType = 8
-	// Keep the old types for backward compatibility
-	AbsenceLate                       AbsenceType = 9
-	AbsenceMedical                    AbsenceType = 10
-	AbsenceGeneral                    AbsenceType = 11
+	AbsenceSick         AbsenceType = 1 // Sick leave (medical certificate required)
+	AbsenceVacation     AbsenceType = 2 // Vacation/approved time off
+	AbsencePersonal     AbsenceType = 3 // Personal day
+	AbsenceUnauthorized AbsenceType = 4 // No call/no show
+	AbsenceOther        AbsenceType = 5 // Other reasons
 )
 
+// Absence represents a user's absence from work
 type Absence struct {
 	ID        uint        `json:"id" gorm:"primaryKey"`
 	UserID    uint        `json:"user_id" gorm:"index"`
-	Date      string      `json:"date" gorm:"type:date;index"`  // YYYY-MM-DD
-	Type      AbsenceType `json:"type" gorm:"type:int"` // Using the enum
+	Date      string      `json:"date" gorm:"type:date;index"` // YYYY-MM-DD
+	Type      AbsenceType `json:"type" gorm:"type:int"`        // Using the enum
 	Reason    string      `json:"reason"`
 	FileURL   string      `json:"file_url,omitempty"`
 	CreatedAt time.Time   `json:"created_at"`
@@ -33,6 +28,7 @@ type Absence struct {
 }
 
 type AbsenceRequest struct {
+	UserID uint        `json:"user_id" binding:"required"`
 	Date   string      `json:"date" binding:"required,datetime=2006-01-02"`
 	Type   AbsenceType `json:"type" binding:"required"`
 	Reason string      `json:"reason" binding:"required"`
@@ -54,11 +50,11 @@ type LockAbsenceRequest struct {
 
 // SimpleResponse is used for simple success/error responses
 type SimpleResponse struct {
-	Message string `json:"message,omitempty"`
-	Error   string `json:"error,omitempty"`
-	Success bool   `json:"success,omitempty"`
-	Processed int  `json:"processed,omitempty"`
-	Failed   int  `json:"failed,omitempty"`
+	Message   string `json:"message,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Success   bool   `json:"success,omitempty"`
+	Processed int    `json:"processed,omitempty"`
+	Failed    int    `json:"failed,omitempty"`
 }
 
 type RegisterRequest struct {
@@ -135,28 +131,16 @@ type UserHRDetailsRequest struct {
 // GetAbsenceTypeText returns the display text for an absence type ID
 func (at AbsenceType) GetText() string {
 	switch at {
-	case AbsenceLicenciaMaternidad:
-		return "Licencia por maternidad"
-	case AbsenceLicenciaEnfermedad:
+	case AbsenceSick:
 		return "Licencia por enfermedad"
-	case AbsenceAusenteEnfermedad:
-		return "Ausente por enfermedad"
-	case AbsenceAusenteEnfermedadFamiliar:
-		return "Ausente por enfermedad familiar"
-	case AbsenceAusenteEstudio:
-		return "Ausente por día de estudio/examen"
-	case AbsenceAusenteDuelo:
-		return "Ausente por duelo"
-	case AbsenceDiaMudanza:
-		return "Día por mudanza"
-	case AbsenceVacaciones:
+	case AbsenceVacation:
 		return "Vacaciones"
-	case AbsenceLate:
-		return "Tarde"
-	case AbsenceMedical:
-		return "Médico"
-	case AbsenceGeneral:
-		return "Ausencia"
+	case AbsencePersonal:
+		return "Día personal"
+	case AbsenceUnauthorized:
+		return "Ausente sin autorización"
+	case AbsenceOther:
+		return "Otro motivo"
 	default:
 		return "Desconocido"
 	}

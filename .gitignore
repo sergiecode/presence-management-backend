@@ -45,3 +45,4 @@ ART vacio.xlsx
 Presentismo vacio.xlsx
 run_migrations.go
 mock_data.sql
+migrations/20250118_update_deactivated_to_active.sql
