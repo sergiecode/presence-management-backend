@@ -433,27 +433,7 @@ func exportCheckinsToExcel(c *gin.Context) {
 
 	query += " ORDER BY DATE(c.time) DESC, u.name"
 
-	type exportRow struct {
-		Empleado       string     `json:"empleado"`
-		DNI            string     `json:"dni"`
-		CUIL           string     `json:"cuil"`
-		BirthDate      *time.Time `json:"birth_date"`
-		HireDate       *time.Time `json:"hire_date"`
-		Location       string     `json:"location"`
-		HrsSemanales   int        `json:"hrs_semanales"`
-		Aclaraciones   string     `json:"aclaraciones"`
-		Date           string     `json:"date"`
-		Time           time.Time  `json:"time"`
-		LocationType   int        `json:"location_type"`
-		LocationDetail string     `json:"location_detail"`
-		Late           bool       `json:"late"`
-		LateReason     string     `json:"late_reason"`
-		CheckoutTime   *time.Time `json:"checkout_time"`
-		CheckoutStatus string     `json:"checkout_status"`
-		Overtime       bool       `json:"overtime"`
-	}
-
-	var rows []exportRow
+	var rows []models.ExportCheckinRow
 	if err := db.DB.Raw(query, args...).Scan(&rows).Error; err != nil {
 		c.JSON(500, gin.H{"error": "Failed to fetch data for export", "details": err.Error()})
 		return
@@ -502,14 +482,14 @@ func exportCheckinsToExcel(c *gin.Context) {
 
 		// Format location as string
 		locationStr := ""
-		if data.Location != "" {
+		if data.Location != nil {
 			// Parse JSON location if needed
 			var location models.Location
-			if err := json.Unmarshal([]byte(data.Location), &location); err == nil {
+			if err := json.Unmarshal([]byte(*data.Location), &location); err == nil {
 				locationStr = fmt.Sprintf("%s %s, %s, %s, %s",
 					location.Calle, location.Numero, location.Ciudad, location.Provincia, location.Pais)
 			} else {
-				locationStr = data.Location
+				locationStr = *data.Location
 			}
 		}
 
@@ -621,31 +601,6 @@ func getAttendance(c *gin.Context) {
 		}
 	}
 
-	type attendanceRow struct {
-		UserID uint
-		Name   string
-		Email  string
-		// Checkin fields
-		CheckinID        *uint
-		CheckinTime      *time.Time
-		Late             *bool
-		LocationType     *int
-		LocationDetail   *string
-		Notes            *string
-		LateReason       *string
-		CheckinCreatedAt *time.Time
-		// Absence fields
-		AbsenceID        *uint
-		AbsenceType      *int
-		AbsenceReason    *string
-		FileURL          *string
-		AbsenceCreatedAt *time.Time
-		// New fields
-		CheckoutTime   *time.Time
-		CheckoutStatus *string
-		Overtime       *bool
-	}
-
 	// Get total count
 	var total int64
 	db.DB.Raw(`
@@ -654,7 +609,7 @@ func getAttendance(c *gin.Context) {
 		WHERE u.active = true AND u.pending_approval = false
 	`, date, date).Scan(&total)
 
-	var rows []attendanceRow
+	var rows []models.AttendanceRow
 	db.DB.Raw(`
 	SELECT
 	u.id AS user_id,
@@ -683,115 +638,15 @@ func getAttendance(c *gin.Context) {
 	WHERE u.active = true AND u.pending_approval = false
 	ORDER BY u.name
 	LIMIT ? OFFSET ?
-`, date, date, pageSize, (page-1)*pageSize).Scan(&rows)
+	`, date, date, pageSize, (page-1)*pageSize).Scan(&rows)
 
-	result := make([]map[string]interface{}, 0, len(rows))
-	for _, r := range rows {
-		status := "absent"
-		var checkin *models.CheckinResponse
-		var absence *models.AbsenceResponse
-		var checkoutTime *time.Time
-		if r.CheckinID != nil {
-			checkoutTime = nil // Initialize to nil
-			if r.CheckoutTime != nil {
-				checkoutTime = r.CheckoutTime
-			}
-			// Create locations array from the query result
-			var locations []models.CheckinLocation
-			if r.LocationType != nil {
-				locations = append(locations, models.CheckinLocation{
-					LocationType:   *r.LocationType,
-					LocationDetail: derefString(r.LocationDetail),
-				})
-			}
-
-			checkin = &models.CheckinResponse{
-				ID:             *r.CheckinID,
-				UserID:         r.UserID,
-				Time:           r.CheckinTime.Format("2006-01-02 15:04:05"),
-				Notes:          derefString(r.Notes),
-				Late:           derefBool(r.Late),
-				LateReason:     derefString(r.LateReason),
-				CreatedAt:      r.CheckinCreatedAt.Format("2006-01-02 15:04:05"),
-				CheckoutTime:   checkoutTime,
-				CheckoutStatus: derefString(r.CheckoutStatus),
-				Overtime:       derefBool(r.Overtime),
-				Locations:      locations,
-			}
-			if r.Late != nil && *r.Late {
-				status = "late"
-			} else {
-				status = "present"
-			}
-		}
-		if r.AbsenceID != nil {
-			absence = &models.AbsenceResponse{
-				ID:        *r.AbsenceID,
-				UserID:    r.UserID,
-				Date:      date,
-				Type:      models.AbsenceType(derefInt(r.AbsenceType)),
-				Reason:    derefString(r.AbsenceReason),
-				FileURL:   derefString(r.FileURL),
-				CreatedAt: r.AbsenceCreatedAt.Format("2006-01-02 15:04:05"),
-			}
-			// Optionally, override status if sick
-			if r.AbsenceType != nil && *r.AbsenceType == int(models.AbsenceSick) {
-				status = "sick"
-			}
-		}
-		row := map[string]interface{}{
-			"user_id": r.UserID,
-			"name":    r.Name,
-			"email":   r.Email,
-			"status":  status,
-			"checkin": checkin,
-			"absence": absence,
-		}
-		result = append(result, row)
+	responses := make([]models.AttendanceResponse, len(rows))
+	for i, row := range rows {
+		responses[i] = models.ToAttendanceResponse(row)
 	}
 
-	tableRows := make([]map[string]interface{}, 0, len(result))
-	for _, row := range result {
-		checkin := row["checkin"].(*models.CheckinResponse)
-		absence := row["absence"].(*models.AbsenceResponse)
-		tableRow := map[string]interface{}{
-			"user_id":         row["user_id"],
-			"name":            row["name"],
-			"email":           row["email"],
-			"status":          row["status"],
-			"checkin_time":    "",
-			"location_type":   "",
-			"location_detail": "",
-			"absence_type":    "",
-			"absence_reason":  "",
-			"checkout_time":   "",
-			"checkout_status": "",
-			"overtime":        false,
-		}
-		if checkin != nil {
-			tableRow["checkin_time"] = checkin.Time
-			// Get first location type if available
-			if len(checkin.Locations) > 0 {
-				tableRow["location_type"] = checkin.Locations[0].LocationType
-			}
-			// Get first location detail if available
-			if len(checkin.Locations) > 0 {
-				tableRow["location_detail"] = checkin.Locations[0].LocationDetail
-			}
-			tableRow["checkout_time"] = checkin.CheckoutTime
-			tableRow["checkout_status"] = checkin.CheckoutStatus
-			tableRow["overtime"] = checkin.Overtime
-		}
-		if absence != nil {
-			tableRow["absence_type"] = absence.Type
-			tableRow["absence_reason"] = absence.Reason
-		}
-		tableRows = append(tableRows, tableRow)
-	}
-
-	// Return paginated response with metadata
 	c.JSON(200, gin.H{
-		"data": tableRows,
+		"data": responses,
 		"pagination": gin.H{
 			"page":        page,
 			"page_size":   pageSize,
@@ -799,33 +654,6 @@ func getAttendance(c *gin.Context) {
 			"total_pages": int((total + int64(pageSize) - 1) / int64(pageSize)),
 		},
 	})
-}
-
-// Helper functions for nil deref
-func derefString(s *string) string {
-	if s != nil {
-		return *s
-	}
-	return ""
-}
-func derefFloat64(f *float64) float64 {
-	if f != nil {
-		return *f
-	}
-	return 0
-}
-func derefBool(b *bool) bool {
-	if b != nil {
-		return *b
-	}
-	return false
-}
-
-func derefInt(i *int) int {
-	if i != nil {
-		return *i
-	}
-	return 0
 }
 
 // @Summary Get daily summary
@@ -917,7 +745,7 @@ func getCheckinsView(c *gin.Context) {
 // @Security BearerAuth
 // @Param user_id query int true "User ID"
 // @Param date query string true "Date (YYYY-MM-DD)"
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} models.IndividualAttendanceResponse
 // @Failure 400 {object} models.ErrorResponse
 // @Failure 401 {object} models.ErrorResponse
 // @Failure 403 {object} models.ErrorResponse
@@ -940,46 +768,16 @@ func getIndividualAttendance(c *gin.Context) {
 	checkinErr := db.DB.Preload("Locations").Where("user_id = ? AND DATE(time) = ?", userID, date).First(&checkin).Error
 	absenceErr := db.DB.Where("user_id = ? AND date = ?", userID, date).First(&absence).Error
 
-	// Separate checkin and checkout info
-	var checkinInfo interface{}
-	var checkoutInfo interface{}
-
+	var checkinPtr *models.Checkin
 	if checkinErr == nil {
-		// Checkin info
-		checkinInfo = gin.H{
-			"id":          checkin.ID,
-			"user_id":     checkin.UserID,
-			"time":        checkin.Time,
-			"notes":       checkin.Notes,
-			"late":        checkin.Late,
-			"late_reason": checkin.LateReason,
-			"created_at":  checkin.CreatedAt,
-			"locations":   checkin.Locations,
-		}
-
-		// Checkout info (if exists)
-		if checkin.CheckoutTime != nil {
-			checkoutInfo = gin.H{
-				"checkout_time":   checkin.CheckoutTime,
-				"checkout_status": checkin.CheckoutStatus,
-				"overtime":        checkin.Overtime,
-			}
-		}
+		checkinPtr = &checkin
 	}
-
-	c.JSON(200, gin.H{
-		"user":     user,
-		"checkin":  ifNoRecordReturnNull(checkinErr, checkinInfo),
-		"checkout": checkoutInfo,
-		"absence":  ifNoRecordReturnNull(absenceErr, absence),
-	})
-}
-
-func ifNoRecordReturnNull(err error, v interface{}) interface{} {
-	if err != nil {
-		return nil
+	var absencePtr *models.Absence
+	if absenceErr == nil {
+		absencePtr = &absence
 	}
-	return v
+	resp := models.ToIndividualAttendanceResponse(&user, checkinPtr, absencePtr)
+	c.JSON(200, resp)
 }
 
 // @Summary HR/Admin create check-in for any user/date
@@ -1427,11 +1225,6 @@ func getUsersByTeam(c *gin.Context) {
 		}
 	}
 
-	var teamUsers []struct {
-		Team  string        `json:"team"`
-		Users []models.User `json:"users"`
-	}
-
 	// Get total count of teams
 	var totalTeams int64
 	db.DB.Model(&models.User{}).
@@ -1450,18 +1243,13 @@ func getUsersByTeam(c *gin.Context) {
 		Pluck("team", &teams)
 
 	// Get users for each team (with pagination per team)
+	var teamUsers []models.TeamUsersResponse
 	for _, team := range teams {
 		var users []models.User
 		db.DB.Where("team = ? AND active = ?", team, true).
 			Order("name").
 			Find(&users)
-		teamUsers = append(teamUsers, struct {
-			Team  string        `json:"team"`
-			Users []models.User `json:"users"`
-		}{
-			Team:  team,
-			Users: users,
-		})
+		teamUsers = append(teamUsers, models.ToTeamUsersResponse(team, users))
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -1536,44 +1324,120 @@ func exportAttendanceToExcel(c *gin.Context) {
 		ORDER BY u.name
 	`
 
-	type attendanceRow struct {
-		UserID         uint       `json:"user_id"`
-		Empleado       string     `json:"empleado"`
-		DNI            string     `json:"dni"`
-		CUIL           string     `json:"cuil"`
-		BirthDate      *time.Time `json:"birth_date"`
-		HireDate       *time.Time `json:"hire_date"`
-		Location       string     `json:"location"`
-		HrsSemanales   int        `json:"hrs_semanales"`
-		Aclaraciones   string     `json:"aclaraciones"`
-		CheckinID      *uint      `json:"checkin_id"`
-		CheckinTime    *time.Time `json:"checkin_time"`
-		Late           *bool      `json:"late"`
-		LocationType   *int       `json:"location_type"`
-		LocationDetail *string    `json:"location_detail"`
-		Notes          *string    `json:"notes"`
-		LateReason     *string    `json:"late_reason"`
-		CheckoutTime   *time.Time `json:"checkout_time"`
-		CheckoutStatus *string    `json:"checkout_status"`
-		Overtime       *bool      `json:"overtime"`
-		AbsenceID      *uint      `json:"absence_id"`
-		AbsenceType    *int       `json:"absence_type"`
-		AbsenceReason  *string    `json:"absence_reason"`
-	}
-
-	var rows []attendanceRow
+	var rows []models.ExportAttendanceRow
 	if err := db.DB.Raw(query, date, date).Scan(&rows).Error; err != nil {
 		c.JSON(500, gin.H{"error": "Failed to fetch attendance data", "details": err.Error()})
 		return
 	}
 
-	// For now, return JSON instead of Excel (Excel library not imported)
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Excel export not implemented yet",
-		"date":    date,
-		"rows":    len(rows),
-		"data":    rows,
+	f := excelize.NewFile()
+	sheet := "ART_Export"
+	f.SetSheetName("Sheet1", sheet)
+
+	// ART Excel format headers (Spanish)
+	headers := []string{
+		"Empleado",             // Employee name
+		"DNI",                  // National ID
+		"CUIL",                 // Tax ID
+		"Fecha Nac.",           // Birth date
+		"Fecha Ingreso",        // Hire date
+		"Domicilio HO/Oficina", // Home/Office address
+		"Dias",                 // Days (we'll use check-in date)
+		"Hrs Semanales",        // Weekly hours
+		"Aclaraciones",         // Notes
+		"Fecha Check-in",       // Check-in date
+		"Hora Check-in",        // Check-in time
+		"Tipo Ubicación",       // Location type
+		"Detalle Ubicación",    // Location detail
+		"Tarde",                // Late
+		"Motivo Tarde",         // Late reason
+		"Hora Check-out",       // Check-out time
+		"Estado Check-out",     // Check-out status
+		"Horas Extra",          // Overtime
+	}
+
+	// Set headers
+	headerStyle, _ := f.NewStyle(&excelize.Style{
+		Font: &excelize.Font{Bold: true},
+		Fill: excelize.Fill{Type: "pattern", Color: []string{"#E0E0E0"}, Pattern: 1},
 	})
+	for i, h := range headers {
+		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		f.SetCellValue(sheet, cell, h)
+		f.SetCellStyle(sheet, cell, cell, headerStyle)
+	}
+
+	// Fill data rows
+	for row, data := range rows {
+		rowNum := row + 2
+
+		// Format location as string
+		locationStr := ""
+		if data.Location != nil && *data.Location != "" {
+			// Parse JSON location if needed
+			var location models.Location
+			if err := json.Unmarshal([]byte(*data.Location), &location); err == nil {
+				locationStr = fmt.Sprintf("%s %s, %s, %s, %s",
+					location.Calle, location.Numero, location.Ciudad, location.Provincia, location.Pais)
+			} else {
+				locationStr = *data.Location
+			}
+		}
+
+		// Format dates
+		birthDateStr := ""
+		if data.BirthDate != nil {
+			birthDateStr = data.BirthDate.Format("02/01/2006")
+		}
+
+		hireDateStr := ""
+		if data.HireDate != nil {
+			hireDateStr = data.HireDate.Format("02/01/2006")
+		}
+
+		checkoutTimeStr := ""
+		if data.CheckoutTime != nil {
+			checkoutTimeStr = data.CheckoutTime.Format("15:04")
+		}
+
+		// Format check-in date and time
+		checkinDateStr := ""
+		checkinTimeStr := ""
+		if data.CheckinTime != nil {
+			checkinDateStr = data.CheckinTime.Format("2006-01-02")
+			checkinTimeStr = data.CheckinTime.Format("15:04")
+		}
+
+		// Set cell values
+		f.SetCellValue(sheet, fmt.Sprintf("A%d", rowNum), data.Empleado)
+		f.SetCellValue(sheet, fmt.Sprintf("B%d", rowNum), data.DNI)
+		f.SetCellValue(sheet, fmt.Sprintf("C%d", rowNum), data.CUIL)
+		f.SetCellValue(sheet, fmt.Sprintf("D%d", rowNum), birthDateStr)
+		f.SetCellValue(sheet, fmt.Sprintf("E%d", rowNum), hireDateStr)
+		f.SetCellValue(sheet, fmt.Sprintf("F%d", rowNum), locationStr)
+		f.SetCellValue(sheet, fmt.Sprintf("G%d", rowNum), checkinDateStr) // Days column uses check-in date
+		f.SetCellValue(sheet, fmt.Sprintf("H%d", rowNum), data.HrsSemanales)
+		f.SetCellValue(sheet, fmt.Sprintf("I%d", rowNum), data.Aclaraciones)
+		f.SetCellValue(sheet, fmt.Sprintf("J%d", rowNum), checkinDateStr)
+		f.SetCellValue(sheet, fmt.Sprintf("K%d", rowNum), checkinTimeStr)
+		f.SetCellValue(sheet, fmt.Sprintf("L%d", rowNum), data.LocationType)
+		f.SetCellValue(sheet, fmt.Sprintf("M%d", rowNum), data.LocationDetail)
+		f.SetCellValue(sheet, fmt.Sprintf("N%d", rowNum), data.Late)
+		f.SetCellValue(sheet, fmt.Sprintf("O%d", rowNum), data.LateReason)
+		f.SetCellValue(sheet, fmt.Sprintf("P%d", rowNum), checkoutTimeStr)
+		f.SetCellValue(sheet, fmt.Sprintf("Q%d", rowNum), data.CheckoutStatus)
+		f.SetCellValue(sheet, fmt.Sprintf("R%d", rowNum), data.Overtime)
+	}
+
+	// Auto-fit columns
+	for i := 1; i <= len(headers); i++ {
+		col, _ := excelize.ColumnNumberToName(i)
+		f.SetColWidth(sheet, col, col, 15)
+	}
+
+	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	c.Header("Content-Disposition", "attachment; filename=art_export.xlsx")
+	_ = f.Write(c.Writer)
 }
 
 // @Summary Convert absence to checkin (HR/admin)

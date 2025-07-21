@@ -111,7 +111,7 @@ func listUsers(c *gin.Context) {
 		}
 	}
 
-	query := db.DB.Where("active = ? OR pending_approval = ?", true, true)
+	query := db.DB.Model(&models.User{}).Where("active = ? OR pending_approval = ?", true, true)
 
 	// Apply filters
 	if team := c.Query("team"); team != "" {
@@ -131,8 +131,13 @@ func listUsers(c *gin.Context) {
 	var users []models.User
 	query.Offset((page - 1) * pageSize).Limit(pageSize).Find(&users)
 
+	responses := make([]models.UserResponse, len(users))
+	for i, u := range users {
+		responses[i] = models.ToUserResponse(u)
+	}
+
 	c.JSON(200, gin.H{
-		"data": users,
+		"data": responses,
 		"pagination": gin.H{
 			"page":        page,
 			"page_size":   pageSize,
@@ -177,7 +182,8 @@ func getUserByID(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "User not found"})
 		return
 	}
-	c.JSON(200, user)
+	resp := models.ToUserResponse(user)
+	c.JSON(200, resp)
 }
 
 // @Summary Update user
