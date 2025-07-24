@@ -33,6 +33,7 @@ func RegisterDashboardRoutes(r *gin.RouterGroup) {
 	r.GET("/attendance/summary", getAttendance) // renamed from getAll
 	r.GET("/attendance/individual", getIndividualAttendance)
 	r.GET("/attendance/daily-summary", getDailySummary)
+	r.GET("/attendance/live-stats", getLiveAttendanceStats)
 	r.GET("/checkins/view", getCheckinsView)
 	r.GET("/users/by-team", getUsersByTeam)
 
@@ -221,71 +222,69 @@ func updateCheckinForHR(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: HR or admin only"})
 		return
 	}
-	var req models.CheckinRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid request", Details: err.Error()})
-		return
-	}
+
 	id := c.Param("id")
 	var checkin models.Checkin
 	if err := db.DB.First(&checkin, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Check-in not found"})
+		c.JSON(404, gin.H{"error": "Checkin not found"})
 		return
 	}
-	old := checkin // shallow copy for audit
-	parsedCheckinTime, _ := time.Parse(time.RFC3339, req.Time)
-	checkin.Time = parsedCheckinTime // parse req.CheckinTime as time.Time before
+
+	var req struct {
+		Time       string                   `json:"time"`
+		Notes      string                   `json:"notes"`
+		Late       *bool                    `json:"late"`
+		LateReason string                   `json:"late_reason"`
+		Locations  []models.LocationRequest `json:"locations"`
+		// user_id is intentionally omitted!
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid request", "details": err.Error()})
+		return
+	}
+
+	// Validate time
+	if req.Time == "" {
+		c.JSON(400, gin.H{"error": "Missing time"})
+		return
+	}
+	t, err := time.Parse(time.RFC3339, req.Time)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "Invalid time format, must be RFC3339"})
+		return
+	}
+	checkin.Time = t
+
 	checkin.Notes = req.Notes
-
-	// Update locations - first delete existing ones
-	db.DB.Where("checkin_id = ?", checkin.ID).Delete(&models.CheckinLocation{})
-
-	// Create new locations
-	for _, loc := range req.Locations {
-		location := models.CheckinLocation{
-			CheckinID:      checkin.ID,
-			LocationType:   loc.LocationType,
-			LocationDetail: loc.LocationDetail,
-		}
-		db.DB.Create(&location)
+	if req.Late != nil {
+		checkin.Late = *req.Late
 	}
+	checkin.LateReason = req.LateReason
+
+	// Update locations if provided
+	if req.Locations != nil {
+		// Remove old locations, add new ones
+		db.DB.Where("checkin_id = ?", checkin.ID).Delete(&models.CheckinLocation{})
+		var locs []models.CheckinLocation
+		for _, l := range req.Locations {
+			locs = append(locs, models.CheckinLocation{
+				CheckinID:      checkin.ID,
+				LocationType:   l.LocationType,
+				LocationDetail: l.LocationDetail,
+			})
+		}
+		db.DB.Create(&locs)
+		checkin.Locations = locs
+	}
+
 	if err := db.DB.Save(&checkin).Error; err != nil {
-		logger.Log.Error("Failed to update check-in (dashboard)",
-			zap.String("endpoint", c.FullPath()),
-			zap.String("method", c.Request.Method),
-			zap.String("user", userClaims["email"].(string)),
-			zap.Any("payload", req),
-			zap.Error(err),
-		)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update check-in", "details": err.Error()})
+		c.JSON(500, gin.H{"error": "Failed to update checkin"})
 		return
 	}
 
-	oldJSON, _ := json.Marshal(old)
-	newJSON, _ := json.Marshal(checkin)
-	audit := models.AuditLog{
-		UserEmail:  userClaims["email"].(string),
-		Action:     "update_checkin",
-		EntityID:   checkin.ID,
-		EntityType: "checkin",
-		OldValue:   string(oldJSON),
-		NewValue:   string(newJSON),
-		Timestamp:  time.Now(),
-	}
-	_ = db.DB.Create(&audit).Error // ignore error for now, or handle/log as needed
-
-	// Load locations for the response
-	db.DB.Model(&checkin).Association("Locations").Find(&checkin.Locations)
-
-	resp := models.CheckinResponse{
-		ID:        checkin.ID,
-		UserID:    checkin.UserID,
-		Time:      checkin.Time.Format(time.RFC3339),
-		Notes:     checkin.Notes,
-		CreatedAt: checkin.CreatedAt.Format(time.RFC3339),
-		Locations: checkin.Locations,
-	}
-	c.JSON(http.StatusOK, resp)
+	// Return updated checkin (with locations)
+	db.DB.Preload("Locations").First(&checkin, checkin.ID)
+	c.JSON(200, checkin)
 }
 
 // @Summary Get audit logs
@@ -1668,4 +1667,33 @@ func createAbsenceForHR(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, resp)
+}
+
+func getLiveAttendanceStats(c *gin.Context) {
+	today := time.Now().Format("2006-01-02")
+	var total, present, absent int64
+
+	db.DB.Model(&models.User{}).Where("active = ?", true).Count(&total)
+	db.DB.Model(&models.Checkin{}).
+		Where("DATE(time) = ?", today).
+		Where("deleted = ?", false).
+		Distinct("user_id").
+		Count(&present)
+	db.DB.Raw(`
+		SELECT COUNT(*) FROM users WHERE active = true AND id NOT IN (
+			SELECT user_id FROM checkins WHERE DATE(time) = ? AND deleted = false
+		)
+	`, today).Scan(&absent)
+
+	rate := 0.0
+	if total > 0 {
+		rate = float64(present) / float64(total) * 100
+	}
+
+	c.JSON(200, gin.H{
+		"total_employees": total,
+		"present_today":   present,
+		"absent_today":    absent,
+		"attendance_rate": rate,
+	})
 }

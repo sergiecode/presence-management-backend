@@ -269,6 +269,12 @@ func updateUser(c *gin.Context) {
 	if req.Team != "" {
 		user.Team = req.Team
 	}
+	if req.Surname != "" {
+		user.Surname = req.Surname
+	}
+	if req.Phone != "" {
+		user.Phone = req.Phone
+	}
 	user.ZohoAccess = req.ZohoAccess
 	user.TeamsAccess = req.TeamsAccess
 	user.OnSiteRequired = req.OnSiteRequired
@@ -474,7 +480,7 @@ func activateUserEmail(c *gin.Context) {
 // @Produce json
 // @Security BearerAuth
 // @Param id path int true "User ID"
-// @Param details body models.UserHRDetailsRequest true "HR details"
+// @Param details body models.UserHRDetailsRequest true "HR details (set 'approve': true to approve and activate user in same call)"
 // @Success 200 {object} models.User
 // @Failure 400 {object} models.ErrorResponse
 // @Failure 401 {object} models.ErrorResponse
@@ -529,6 +535,10 @@ func updateUserHRDetails(c *gin.Context) {
 	}
 	if req.Team != "" {
 		user.Team = req.Team
+	}
+	if req.Approve != nil && *req.Approve {
+		user.PendingApproval = false
+		user.Active = true
 	}
 	user.ZohoAccess = req.ZohoAccess
 	user.TeamsAccess = req.TeamsAccess

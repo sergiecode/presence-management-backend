@@ -18,18 +18,18 @@ import (
 func RegisterAbsenceRoutes(r *gin.RouterGroup) {
 	// Primary absence operations
 	r.POST("/", reportAbsence)
-	r.GET("/", getAbsenceHistory)               // current user's absences
+	r.GET("/", getAbsenceHistory) // current user's absences
 	r.PUT("/:id", updateAbsence)
 	r.DELETE("/:id", deleteAbsence)
-	
+
 	// Document management
 	r.POST("/:id/documents", uploadAbsenceDocument)
 	r.GET("/:id/documents", getAbsenceDocuments)
-	
+
 	// Admin/HR operations
-	r.GET("/all", listAllAbsences)              // all users' absences (admin)
+	r.GET("/all", listAllAbsences) // all users' absences (admin)
 	r.POST("/batch-approve", batchApproveAbsences)
-	r.PATCH("/:id/lock", lockAbsence)           // admin lock absence record
+	r.PATCH("/:id/lock", lockAbsence) // admin lock absence record
 }
 
 // @Summary Report absence/late/medical
@@ -54,6 +54,11 @@ func reportAbsence(c *gin.Context) {
 			zap.Error(err),
 		)
 		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid request", Details: err.Error()})
+		return
+	}
+	// Validate date format strictly
+	if !ValidateYYYYMMDD(req.Date) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Date must be in YYYY-MM-DD format"})
 		return
 	}
 	claims, ok := c.Get("user")
@@ -118,7 +123,7 @@ func getAbsenceHistory(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "Invalid token"})
 		return
 	}
-	
+
 	// Pagination parameters
 	page := 1
 	pageSize := 20
@@ -134,11 +139,11 @@ func getAbsenceHistory(c *gin.Context) {
 			pageSize = 20
 		}
 	}
-	
+
 	// Get total count
 	var total int64
 	db.DB.Model(&models.Absence{}).Where("user_id = ?", uint(userID)).Count(&total)
-	
+
 	var absences []models.Absence
 	err := db.DB.Where("user_id = ?", uint(userID)).
 		Order("date desc").
@@ -161,7 +166,7 @@ func getAbsenceHistory(c *gin.Context) {
 			CreatedAt: ab.CreatedAt.Format(time.RFC3339),
 		}
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"data": resp,
 		"pagination": gin.H{
@@ -226,6 +231,11 @@ func updateAbsence(c *gin.Context) {
 			zap.Error(err),
 		)
 		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid request", Details: err.Error()})
+		return
+	}
+	// Validate date format strictly
+	if !ValidateYYYYMMDD(req.Date) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Date must be in YYYY-MM-DD format"})
 		return
 	}
 	absence.Date = req.Date

@@ -126,6 +126,7 @@ type UserHRDetailsRequest struct {
 	WeeklyObjectiveDays  int        `json:"weekly_objective_days,omitempty"`
 	MonthlyObjectiveDays int        `json:"monthly_objective_days,omitempty"`
 	OfficeDays           string     `json:"office_days,omitempty"`
+	Approve              *bool      `json:"approve,omitempty"`
 }
 
 // GetAbsenceTypeText returns the display text for an absence type ID

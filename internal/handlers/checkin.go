@@ -25,7 +25,7 @@ func RegisterCheckinRoutes(r *gin.RouterGroup) {
 	// Individual checkin management
 	r.GET("/", getCheckinHistory)    // current user's history
 	r.GET("/today", getTodayCheckin) // current user's today record
-	r.PUT("/:id", updateCheckin)
+	// r.PUT("/:id", updateCheckin)
 	r.DELETE("/:id", deleteCheckin)
 
 	// Admin/HR operations
@@ -87,26 +87,17 @@ func submitCheckin(c *gin.Context) {
 	var checkinDT time.Time
 
 	if req.Time != "" {
-		// Try RFC3339 and common formats
-		layouts := []string{
-			time.RFC3339,
-			"2006-01-02T15:04:05", // no timezone
-			"2006-01-02 15:04:05",
-			"2006-01-02T15:04",
+		if !ValidateRFC3339(req.Time) {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Check-in time must be RFC3339 format (YYYY-MM-DDTHH:MM:SSZ)"})
+			return
 		}
 		var err error
-		for _, layout := range layouts {
-			checkinDT, err = time.Parse(layout, req.Time)
-			if err == nil {
-				break
-			}
-		}
+		checkinDT, err = time.Parse(time.RFC3339, req.Time)
 		if err != nil {
-			// fallback: use now
-			checkinDT = now
+			c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid check-in time"})
+			return
 		}
 	} else {
-		// fallback: use now
 		checkinDT = now
 	}
 
@@ -406,14 +397,14 @@ func getTodayCheckin(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-// @Summary Not allowed
-// @Description Users cannot update check-ins. Use HR endpoint.
-// @Tags checkin
-// @Router /api/checkins/{id} [put]
-// @Failure 405 {object} models.ErrorResponse
-func updateCheckin(c *gin.Context) {
-	c.JSON(405, models.ErrorResponse{Error: "Updating check-ins is not allowed. Contact HR."})
-}
+// // @Summary Not allowed
+// // @Description Users cannot update check-ins. Use HR endpoint.
+// // @Tags checkin
+// // @Router /api/checkins/{id} [put]
+// // @Failure 405 {object} models.ErrorResponse
+// func updateCheckin(c *gin.Context) {
+// 	c.JSON(405, models.ErrorResponse{Error: "Updating check-ins is not allowed. Contact HR."})
+// }
 
 // @Summary List all check-ins (HR/admin)
 // @Description HR/admin only. Returns paginated list of all check-ins. Query params: page, page_size, user_id, date
@@ -591,31 +582,32 @@ func submitCheckout(c *gin.Context) {
 
 	var checkoutTime time.Time
 	if req.CheckoutTime != "" {
-		// Try multiple time formats
-		layouts := []string{
+		if !ValidateRFC3339(req.CheckoutTime) {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Checkout time must be RFC3339 format (YYYY-MM-DDTHH:MM:SSZ)"})
+			return
+		}
+		var err error
+		for _, layout := range []string{
 			time.RFC3339,
 			"2006-01-02T15:04:05",
 			"15:04",
 			"2006-01-02 15:04:05",
-		}
-
-		var parseErr error
-		for _, layout := range layouts {
+		} {
 			if layout == "15:04" {
 				// For time-only format, combine with today's date
 				today := time.Now().Format("2006-01-02")
-				checkoutTime, parseErr = time.Parse("2006-01-02 15:04", today+" "+req.CheckoutTime)
+				checkoutTime, err = time.Parse("2006-01-02 15:04", today+" "+req.CheckoutTime)
 			} else {
-				checkoutTime, parseErr = time.Parse(layout, req.CheckoutTime)
+				checkoutTime, err = time.Parse(layout, req.CheckoutTime)
 			}
-			if parseErr == nil {
+			if err == nil {
 				logger.Log.Info("Time parsed successfully", zap.String("layout", layout), zap.Time("checkout_time", checkoutTime))
 				break
 			}
 		}
 
-		if parseErr != nil {
-			logger.Log.Error("Failed to parse checkout time", zap.String("checkout_time", req.CheckoutTime), zap.Error(parseErr))
+		if err != nil {
+			logger.Log.Error("Failed to parse checkout time", zap.String("checkout_time", req.CheckoutTime), zap.Error(err))
 			c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid checkout_time format. Use HH:MM, RFC3339, or YYYY-MM-DDTHH:MM:SS"})
 			return
 		}
@@ -762,6 +754,10 @@ func updateCheckoutForHR(c *gin.Context) {
 		return
 	}
 	if req.CheckoutTime != "" {
+		if !ValidateRFC3339(req.CheckoutTime) {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Checkout time must be RFC3339 format (YYYY-MM-DDTHH:MM:SSZ)"})
+			return
+		}
 		ts, err := time.Parse(time.RFC3339, req.CheckoutTime)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid checkout_time format (must be RFC3339)"})

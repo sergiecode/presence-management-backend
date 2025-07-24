@@ -153,6 +153,45 @@ func main() {
 
 	ensureAdminUser()
 
+	// Start auto-checkout goroutine
+	go func() {
+		for {
+			now := time.Now()
+			next := time.Date(now.Year(), now.Month(), now.Day(), 18, 30, 0, 0, now.Location())
+			if now.After(next) {
+				next = next.Add(24 * time.Hour)
+			}
+			time.Sleep(time.Until(next))
+
+			// Run auto-checkout logic
+			log.Println("Running auto-checkout for users who forgot to checkout...")
+			var checkins []models.Checkin
+			today := time.Now().Format("2006-01-02")
+			db.DB.Where("checkout_time IS NULL AND deleted = false AND DATE(time) = ?", today).Find(&checkins)
+			for _, ch := range checkins {
+				var user models.User
+				if err := db.DB.First(&user, ch.UserID).Error; err != nil {
+					log.Printf("Could not find user %d for auto-checkout: %v", ch.UserID, err)
+					continue
+				}
+				endTimeStr := user.CheckoutEndTime
+				if endTimeStr == "" {
+					endTimeStr = "18:00"
+				}
+				checkinDate, _ := time.Parse("2006-01-02", today)
+				endTime, err := time.ParseInLocation("2006-01-02 15:04", today+" "+endTimeStr, now.Location())
+				if err != nil {
+					endTime = checkinDate.Add(18 * time.Hour) // fallback 18:00
+				}
+				ch.CheckoutTime = &endTime
+				ch.CheckoutStatus = "Auto-checked out (missed manual checkout)"
+				if err := db.DB.Save(&ch).Error; err != nil {
+					log.Printf("Failed to auto-checkout checkin %d: %v", ch.ID, err)
+				}
+			}
+		}
+	}()
+
 	r := gin.Default()
 
 	// Add recovery middleware to catch panics
