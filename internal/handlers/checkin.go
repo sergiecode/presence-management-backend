@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"BE-ABSTI-CLOCKIN/internal/db"
@@ -25,7 +26,6 @@ func RegisterCheckinRoutes(r *gin.RouterGroup) {
 	// Individual checkin management
 	r.GET("/", getCheckinHistory)    // current user's history
 	r.GET("/today", getTodayCheckin) // current user's today record
-	// r.PUT("/:id", updateCheckin)
 	r.DELETE("/:id", deleteCheckin)
 
 	// Admin/HR operations
@@ -34,7 +34,9 @@ func RegisterCheckinRoutes(r *gin.RouterGroup) {
 	r.POST("/batch-approve", batchApproveCheckins)
 
 	// Location management
-	r.PUT("/locations", updateLocations) // change location during day
+	r.GET("/locations", getLocations)          // get today's locations
+	r.PUT("/locations", updateLocations)       // add locations during day
+	r.DELETE("/locations/:id", deleteLocation) // delete specific location
 }
 
 // @Summary Submit daily check-in
@@ -82,20 +84,97 @@ func submitCheckin(c *gin.Context) {
 		return
 	}
 
+	// Determine user's timezone
+	tz := user.Timezone
+	if tz == "" {
+		tz = "UTC"
+	}
+
+	// Convert common timezone formats to proper IANA timezone names
+	if tz == "GMT-3" {
+		tz = "America/Argentina/Buenos_Aires"
+	} else if tz == "GMT-2" {
+		tz = "America/Sao_Paulo"
+	} else if tz == "GMT-5" {
+		tz = "America/New_York"
+	} else if tz == "GMT-8" {
+		tz = "America/Los_Angeles"
+	} else if tz == "GMT+1" {
+		tz = "Europe/London"
+	} else if tz == "GMT+2" {
+		tz = "Europe/Paris"
+	} else if tz == "GMT+8" {
+		tz = "Asia/Shanghai"
+	} else if tz == "GMT+9" {
+		tz = "Asia/Tokyo"
+	} else if strings.HasPrefix(tz, "GMT") {
+		// For other GMT offsets, try to find a suitable timezone
+		// or fallback to UTC
+		tz = "UTC"
+	}
+
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		log.Printf("Failed to load timezone %s, falling back to UTC: %v", tz, err)
+		loc = time.UTC
+	}
+
+	log.Printf("User timezone: %s, resolved to: %s", user.Timezone, tz)
+	log.Printf("Location object: %v", loc)
+
 	// Determine check-in time
 	now := time.Now().UTC()
 	var checkinDT time.Time
 
 	if req.Time != "" {
-		if !ValidateRFC3339(req.Time) {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Check-in time must be RFC3339 format (YYYY-MM-DDTHH:MM:SSZ)"})
-			return
-		}
-		var err error
-		checkinDT, err = time.Parse(time.RFC3339, req.Time)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid check-in time"})
-			return
+		// Check if the time has a timezone indicator (Z or +00:00)
+		if strings.HasSuffix(req.Time, "Z") || strings.Contains(req.Time, "+") {
+			// Parse as UTC time
+			if parsed, err := time.Parse(time.RFC3339, req.Time); err == nil {
+				checkinDT = parsed
+			} else {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid UTC time format. Use RFC3339 format (YYYY-MM-DDTHH:MM:SSZ)"})
+				return
+			}
+		} else {
+			// Parse as local time in user's timezone
+			layouts := []string{
+				"2006-01-02T15:04:05",
+				"2006-01-02 15:04:05",
+				"15:04",
+				"15:04:05",
+			}
+
+			parsed := false
+			for _, layout := range layouts {
+				if layout == "15:04" || layout == "15:04:05" {
+					// For time-only format, combine with today's date
+					today := time.Now().In(loc).Format("2006-01-02")
+					if t, err := time.ParseInLocation("2006-01-02 "+layout, today+" "+req.Time, loc); err == nil {
+						checkinDT = t.UTC() // Convert to UTC for storage
+						parsed = true
+						break
+					}
+				} else {
+					// Parse the time string as local time in the user's timezone
+					if t, err := time.ParseInLocation(layout, req.Time, loc); err == nil {
+						// Convert to UTC for storage
+						checkinDT = t.UTC()
+
+						log.Printf("Input time: %s", req.Time)
+						log.Printf("Parsed in timezone: %s", tz)
+						log.Printf("Final UTC time: %s", checkinDT.Format("2006-01-02 15:04:05"))
+
+						parsed = true
+						break
+					}
+				}
+			}
+
+			if !parsed {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid check-in time format. Use HH:MM, YYYY-MM-DDTHH:MM:SS, or RFC3339"})
+				return
+			}
 		}
 	} else {
 		checkinDT = now
@@ -105,11 +184,10 @@ func submitCheckin(c *gin.Context) {
 	dateStr := checkinDT.Format("2006-01-02")
 
 	// Determine user's timezone and threshold
-	tz := user.Timezone
 	if tz == "" {
 		tz = "UTC"
 	}
-	loc, err := time.LoadLocation(tz)
+	loc, err = time.LoadLocation(tz)
 	if err != nil {
 		loc = time.UTC
 	}
@@ -252,7 +330,7 @@ func submitCheckin(c *gin.Context) {
 	resp := models.CheckinResponse{
 		ID:         checkin.ID,
 		UserID:     checkin.UserID,
-		Time:       checkin.Time.Format(time.RFC3339),
+		Time:       checkin.Time.Format(time.RFC3339), // Return UTC time with Z
 		Notes:      checkin.Notes,
 		Late:       checkin.Late,
 		LateReason: checkin.LateReason,
@@ -313,16 +391,25 @@ func getCheckinHistory(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to fetch check-ins", Details: err.Error()})
 		return
 	}
+
+	// Get user's timezone for time conversion
+	var user models.User
+	if err := db.DB.First(&user, uint(userID)).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "User not found"})
+		return
+	}
+
 	resp := make([]models.CheckinResponse, len(checkins))
 	for i, ch := range checkins {
 		var checkoutTime *time.Time
 		if ch.CheckoutTime != nil {
 			checkoutTime = ch.CheckoutTime
 		}
+
 		resp[i] = models.CheckinResponse{
 			ID:             ch.ID,
 			UserID:         ch.UserID,
-			Time:           ch.Time.Format(time.RFC3339),
+			Time:           ch.Time.Format(time.RFC3339), // Return UTC time with Z
 			Notes:          ch.Notes,
 			Late:           ch.Late,
 			LateReason:     ch.LateReason,
@@ -363,7 +450,15 @@ func getTodayCheckin(c *gin.Context) {
 	userClaims := claims.(jwt.MapClaims)
 	_, _ = userClaims["role"].(string)
 	userID, _ := userClaims["user_id"].(float64)
-	today := time.Now().Format("2006-01-02")
+
+	// Get user's timezone
+	var user models.User
+	if err := db.DB.First(&user, uint(userID)).Error; err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "User not found"})
+		return
+	}
+
+	today := time.Now().UTC().Format("2006-01-02")
 	var checkin models.Checkin
 	err := db.DB.Where("user_id = ? AND DATE(time) = ? AND deleted = false", uint(userID), today).First(&checkin).Error
 	if err != nil {
@@ -377,19 +472,15 @@ func getTodayCheckin(c *gin.Context) {
 		return
 	}
 
-	var checkoutTime *time.Time
-	if checkin.CheckoutTime != nil {
-		checkoutTime = checkin.CheckoutTime
-	}
 	resp := models.CheckinResponse{
 		ID:             checkin.ID,
 		UserID:         checkin.UserID,
-		Time:           checkin.Time.Format(time.RFC3339),
+		Time:           checkin.Time.Format(time.RFC3339), // Return UTC time with Z
 		Notes:          checkin.Notes,
 		Late:           checkin.Late,
 		LateReason:     checkin.LateReason,
 		CreatedAt:      checkin.CreatedAt.Format(time.RFC3339),
-		CheckoutTime:   checkoutTime,
+		CheckoutTime:   checkin.CheckoutTime,
 		CheckoutStatus: checkin.CheckoutStatus,
 		Overtime:       checkin.Overtime,
 		Locations:      checkin.Locations,
@@ -910,13 +1001,7 @@ func updateLocations(c *gin.Context) {
 		return
 	}
 
-	// Delete existing locations
-	if err := db.DB.Where("checkin_id = ?", checkin.ID).Delete(&models.CheckinLocation{}).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to clear existing locations", Details: err.Error()})
-		return
-	}
-
-	// Add new locations
+	// Add new locations (don't delete existing ones)
 	for _, loc := range req.Locations {
 		location := models.CheckinLocation{
 			CheckinID:      checkin.ID,
@@ -954,4 +1039,104 @@ func updateLocations(c *gin.Context) {
 		Locations:      checkin.Locations,
 	}
 	c.JSON(http.StatusOK, resp)
+}
+
+// @Summary Get today's locations
+// @Description Get all locations for today's check-in. JWT required.
+// @Tags checkin
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {array} models.CheckinLocation
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/checkins/locations [get]
+func getLocations(c *gin.Context) {
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "Unauthorized"})
+		return
+	}
+	userClaims := claims.(jwt.MapClaims)
+	userIDFloat, ok := userClaims["user_id"].(float64)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "Invalid user ID in token"})
+		return
+	}
+	userID := uint(userIDFloat)
+
+	// Find today's check-in
+	today := time.Now().Format("2006-01-02")
+	var checkin models.Checkin
+	err := db.DB.Where("user_id = ? AND DATE(time) = ?", userID, today).First(&checkin).Error
+	if err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "No check-in found for today"})
+		return
+	}
+
+	// Load locations for this check-in
+	var locations []models.CheckinLocation
+	if err := db.DB.Where("checkin_id = ?", checkin.ID).Find(&locations).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to load locations", Details: err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, locations)
+}
+
+// @Summary Delete a specific location
+// @Description Delete a specific location from today's check-in. JWT required.
+// @Tags checkin
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "Location ID"
+// @Success 200 {object} models.SimpleResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/checkins/locations/{id} [delete]
+func deleteLocation(c *gin.Context) {
+	locationID := c.Param("id")
+	if locationID == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Location ID is required"})
+		return
+	}
+
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "Unauthorized"})
+		return
+	}
+	userClaims := claims.(jwt.MapClaims)
+	userIDFloat, ok := userClaims["user_id"].(float64)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "Invalid user ID in token"})
+		return
+	}
+	userID := uint(userIDFloat)
+
+	// Find today's check-in
+	today := time.Now().Format("2006-01-02")
+	var checkin models.Checkin
+	err := db.DB.Where("user_id = ? AND DATE(time) = ?", userID, today).First(&checkin).Error
+	if err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "No check-in found for today"})
+		return
+	}
+
+	// Find and delete the specific location
+	var location models.CheckinLocation
+	err = db.DB.Where("id = ? AND checkin_id = ?", locationID, checkin.ID).First(&location).Error
+	if err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "Location not found"})
+		return
+	}
+
+	if err := db.DB.Delete(&location).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to delete location", Details: err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SimpleResponse{
+		Message: "Location deleted successfully",
+		Success: true,
+	})
 }

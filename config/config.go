@@ -21,4 +21,4 @@ func LoadGoogleOAuthConfig() *GoogleOAuthConfig {
 		log.Fatal("Missing Google OAuth2 credentials in environment variables")
 	}
 	return cfg
-} 
+}

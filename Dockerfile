@@ -12,6 +12,8 @@ RUN swag init -g cmd/main.go -o docs
 RUN go build -o absti-api ./cmd/main.go
 
 FROM alpine:latest
+# Install timezone data
+RUN apk add --no-cache tzdata
 WORKDIR /app
 COPY --from=builder /app/absti-api .
 EXPOSE 8080

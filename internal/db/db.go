@@ -251,6 +251,49 @@ func RunSQLMigrations() error {
 		}
 	}
 
+	// Migration 5: Add HR fields to users table
+	migration5 := `
+	-- Migration: Add HR fields to users table
+	-- Date: 2025-01-10
+	-- Description: Add fields from Excel files for HR management
+
+	-- Add new columns to users table
+	ALTER TABLE users ADD COLUMN IF NOT EXISTS dni VARCHAR(20);
+	ALTER TABLE users ADD COLUMN IF NOT EXISTS cuil VARCHAR(20);
+	ALTER TABLE users ADD COLUMN IF NOT EXISTS birth_date DATE;
+	ALTER TABLE users ADD COLUMN IF NOT EXISTS hire_date DATE;
+	ALTER TABLE users ADD COLUMN IF NOT EXISTS location JSONB;
+	ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_hours INTEGER DEFAULT 0;
+	ALTER TABLE users ADD COLUMN IF NOT EXISTS notes TEXT;
+	ALTER TABLE users ADD COLUMN IF NOT EXISTS team VARCHAR(50);
+	ALTER TABLE users ADD COLUMN IF NOT EXISTS zoho_access BOOLEAN DEFAULT FALSE;
+	ALTER TABLE users ADD COLUMN IF NOT EXISTS teams_access BOOLEAN DEFAULT FALSE;
+	ALTER TABLE users ADD COLUMN IF NOT EXISTS on_site_required BOOLEAN DEFAULT FALSE;
+	ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_objective_days INTEGER DEFAULT 0;
+	ALTER TABLE users ADD COLUMN IF NOT EXISTS monthly_objective_days INTEGER DEFAULT 0;
+	ALTER TABLE users ADD COLUMN IF NOT EXISTS office_days VARCHAR(50);
+
+	-- Add indexes for better performance
+	CREATE INDEX IF NOT EXISTS idx_users_dni ON users(dni);
+	CREATE INDEX IF NOT EXISTS idx_users_cuil ON users(cuil);
+	CREATE INDEX IF NOT EXISTS idx_users_team ON users(team);
+	CREATE INDEX IF NOT EXISTS idx_users_hire_date ON users(hire_date);
+	`
+
+	// Check if migration 5 has been applied
+	DB.Model(&struct{}{}).Table("schema_migrations").Where("version = ?", "005_hr_fields").Count(&count)
+
+	if count == 0 {
+		if err := DB.Exec(migration5).Error; err != nil {
+			return fmt.Errorf("failed to run migration 5: %w", err)
+		}
+
+		// Mark migration as applied
+		if err := DB.Exec("INSERT INTO schema_migrations (version) VALUES (?)", "005_hr_fields").Error; err != nil {
+			return fmt.Errorf("failed to mark migration 5 as applied: %w", err)
+		}
+	}
+
 	return nil
 }
 

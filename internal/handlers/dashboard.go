@@ -3,7 +3,9 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"BE-ABSTI-CLOCKIN/internal/db"
@@ -46,6 +48,12 @@ func RegisterDashboardRoutes(r *gin.RouterGroup) {
 	r.POST("/checkins", createOrReplaceCheckinForHR)
 	r.POST("/convert-absence-to-checkin", convertAbsenceToCheckin) // New endpoint
 	r.POST("/create-absence", createAbsenceForHR)                  // New endpoint for HR to create absences
+
+	// HR/Admin location management endpoints
+	r.GET("/locations/:checkin_id", getLocationsForHR)       // Get locations for any check-in
+	r.PUT("/locations/:checkin_id", addLocationsForHR)       // Add locations to any check-in
+	r.DELETE("/locations/:location_id", deleteLocationForHR) // Delete any location
+
 	r.GET("/audit-logs", getAuditLogs)
 }
 
@@ -248,17 +256,92 @@ func updateCheckinForHR(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "Missing time"})
 		return
 	}
+
+	// Parse time as RFC3339 (frontend should send timezone-aware time)
 	t, err := time.Parse(time.RFC3339, req.Time)
 	if err != nil {
-		c.JSON(400, gin.H{"error": "Invalid time format, must be RFC3339"})
+		c.JSON(400, gin.H{"error": "Invalid time format, must be RFC3339 with timezone info"})
 		return
 	}
+
 	checkin.Time = t
 
-	checkin.Notes = req.Notes
-	if req.Late != nil {
-		checkin.Late = *req.Late
+	// Get user info for late validation
+	var user models.User
+	if err := db.DB.First(&user, checkin.UserID).Error; err != nil {
+		c.JSON(404, gin.H{"error": "User not found"})
+		return
 	}
+
+	// Determine user's timezone for late validation
+	tz := user.Timezone
+	if tz == "" {
+		tz = "UTC"
+	}
+
+	// Convert common timezone formats to proper IANA timezone names
+	if tz == "GMT-3" {
+		tz = "America/Argentina/Buenos_Aires"
+	} else if tz == "GMT-2" {
+		tz = "America/Sao_Paulo"
+	} else if tz == "GMT-5" {
+		tz = "America/New_York"
+	} else if tz == "GMT-8" {
+		tz = "America/Los_Angeles"
+	} else if tz == "GMT+1" {
+		tz = "Europe/London"
+	} else if tz == "GMT+2" {
+		tz = "Europe/Paris"
+	} else if tz == "GMT+8" {
+		tz = "Asia/Shanghai"
+	} else if tz == "GMT+9" {
+		tz = "Asia/Tokyo"
+	} else if strings.HasPrefix(tz, "GMT") {
+		tz = "UTC"
+	}
+
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		log.Printf("Failed to load timezone %s, falling back to UTC: %v", tz, err)
+		loc = time.UTC
+	}
+
+	// Calculate late status based on user's timezone and start time
+	startTime := user.CheckinStartTime
+	if startTime == "" {
+		startTime = "09:00" // Default start time if not configured
+	}
+
+	// Extract date from checkin time
+	dateStr := t.Format("2006-01-02")
+
+	// Create threshold time in user's timezone
+	thresholdDT, err := time.ParseInLocation("2006-01-02T15:04", dateStr+"T"+startTime, loc)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid check-in threshold config"})
+		return
+	}
+
+	// Convert check-in time to user's timezone for comparison
+	checkinInUserTZ := t.In(loc)
+
+	// Calculate late status
+	late := false
+	delayMinutes := 0
+	if checkinInUserTZ.After(thresholdDT) {
+		delay := checkinInUserTZ.Sub(thresholdDT)
+		delayMinutes = int(delay.Minutes())
+		if delayMinutes > 15 {
+			late = true
+			if req.LateReason == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Late check-in requires a reason for delays over 15 minutes. You were %d minutes late.", delayMinutes)})
+				return
+			}
+		}
+	}
+
+	checkin.Notes = req.Notes
+	checkin.Late = late
 	checkin.LateReason = req.LateReason
 
 	// Update locations if provided
@@ -608,17 +691,16 @@ func getAttendance(c *gin.Context) {
 		WHERE u.active = true AND u.pending_approval = false
 	`, date, date).Scan(&total)
 
+	// First, get the basic attendance data without locations
 	var rows []models.AttendanceRow
 	db.DB.Raw(`
-	SELECT
+	SELECT DISTINCT
 	u.id AS user_id,
 	u.name,
 	u.email,
 	c.id AS checkin_id,
 	c.time AS checkin_time,
 	c.late,
-	cl.location_type,
-	cl.location_detail,
 	c.notes,
 	c.late_reason,
 	c.created_at AS checkin_created_at,
@@ -632,7 +714,6 @@ func getAttendance(c *gin.Context) {
 	c.overtime
 	FROM users u
 	LEFT JOIN checkins c ON c.user_id = u.id AND DATE(c.time) = ? AND c.deleted = false
-	LEFT JOIN checkin_locations cl ON c.id = cl.checkin_id
 	LEFT JOIN absences a ON a.user_id = u.id AND a.date = ? AND a.deleted = false
 	WHERE u.active = true AND u.pending_approval = false
 	ORDER BY u.name
@@ -641,7 +722,39 @@ func getAttendance(c *gin.Context) {
 
 	responses := make([]models.AttendanceResponse, len(rows))
 	for i, row := range rows {
-		responses[i] = models.ToAttendanceResponse(row)
+		response := models.ToAttendanceResponse(row)
+
+		// Load locations for this check-in if it exists
+		if row.CheckinID != nil {
+			var locations []models.CheckinLocation
+			db.DB.Where("checkin_id = ?", *row.CheckinID).Find(&locations)
+			response.Locations = locations
+		}
+
+		// Convert UTC times to user's timezone if available
+		if row.CheckinTime != nil {
+			// Get user's timezone
+			var user models.User
+			if err := db.DB.First(&user, row.UserID).Error; err == nil && user.Timezone != "" {
+				if loc, err := time.LoadLocation(user.Timezone); err == nil {
+					userTime := row.CheckinTime.In(loc)
+					response.CheckinTime = &userTime
+				}
+			}
+		}
+
+		if row.CheckoutTime != nil {
+			// Get user's timezone
+			var user models.User
+			if err := db.DB.First(&user, row.UserID).Error; err == nil && user.Timezone != "" {
+				if loc, err := time.LoadLocation(user.Timezone); err == nil {
+					userTime := row.CheckoutTime.In(loc)
+					response.CheckoutTime = &userTime
+				}
+			}
+		}
+
+		responses[i] = response
 	}
 
 	c.JSON(200, gin.H{
@@ -767,8 +880,20 @@ func getIndividualAttendance(c *gin.Context) {
 	checkinErr := db.DB.Preload("Locations").Where("user_id = ? AND DATE(time) = ?", userID, date).First(&checkin).Error
 	absenceErr := db.DB.Where("user_id = ? AND date = ?", userID, date).First(&absence).Error
 
+	// Get user's timezone for time conversion
+	tz := user.Timezone
+	if tz == "" {
+		tz = "UTC"
+	}
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		loc = time.UTC
+	}
+
 	var checkinPtr *models.Checkin
 	if checkinErr == nil {
+		// Convert UTC time to user's timezone
+		checkin.Time = checkin.Time.In(loc)
 		checkinPtr = &checkin
 	}
 	var absencePtr *models.Absence
@@ -866,14 +991,79 @@ func createOrReplaceCheckinForHR(c *gin.Context) {
 			return
 		}
 	} else {
-		// Create new
+		// Create new - need to handle timezone conversion
+		var user models.User
+		if err := db.DB.First(&user, req.UserID).Error; err != nil {
+			c.JSON(404, models.ErrorResponse{Error: "User not found"})
+			return
+		}
+
+		// Get user's timezone
+		tz := user.Timezone
+		if tz == "" {
+			tz = "UTC"
+		}
+		userLoc, err := time.LoadLocation(tz)
+		if err != nil {
+			userLoc = time.UTC
+		}
+
+		// Parse time in user's timezone and convert to UTC for storage
+		var checkinTime time.Time
+		if req.Time != "" {
+			// Try to parse as RFC3339 first (if admin sends UTC)
+			if parsed, err := time.Parse(time.RFC3339, req.Time); err == nil {
+				checkinTime = parsed
+			} else {
+				// Try to parse as local time in user's timezone
+				layouts := []string{
+					"2006-01-02T15:04:05",
+					"2006-01-02 15:04:05",
+					"15:04",
+					"15:04:05",
+				}
+
+				parsed := false
+				for _, layout := range layouts {
+					if layout == "15:04" || layout == "15:04:05" {
+						// For time-only format, combine with today's date
+						today := time.Now().In(userLoc).Format("2006-01-02")
+						if t, err := time.ParseInLocation("2006-01-02 "+layout, today+" "+req.Time, userLoc); err == nil {
+							checkinTime = t.UTC() // Convert to UTC for storage
+							parsed = true
+							break
+						}
+					} else {
+						if t, err := time.ParseInLocation(layout, req.Time, userLoc); err == nil {
+							checkinTime = t.UTC() // Convert to UTC for storage
+							parsed = true
+							break
+						}
+					}
+				}
+
+				if !parsed {
+					c.JSON(400, models.ErrorResponse{Error: "Invalid check-in time format. Use HH:MM, YYYY-MM-DDTHH:MM:SS, or RFC3339"})
+					return
+				}
+			}
+		} else {
+			checkinTime = time.Now().UTC()
+		}
+
 		checkin = models.Checkin{
 			UserID:     req.UserID,
-			Time:       parseTimeOrNow(req.Time, ""),
+			Time:       checkinTime,
 			Notes:      req.Notes,
 			Late:       req.LateReason != "",
 			LateReason: req.LateReason,
 		}
+
+		logger.Log.Info("Creating new check-in for user",
+			zap.Uint("user_id", req.UserID),
+			zap.Time("checkin_time", checkinTime),
+			zap.String("checkin_date", checkinTime.Format("2006-01-02")))
+
 		if err := db.DB.Create(&checkin).Error; err != nil {
 			c.JSON(500, models.ErrorResponse{Error: "Failed to create check-in", Details: err.Error()})
 			return
@@ -888,14 +1078,38 @@ func createOrReplaceCheckinForHR(c *gin.Context) {
 			}
 			db.DB.Create(&location)
 		}
+
+		// Load locations for the response
+		db.DB.Model(&checkin).Association("Locations").Find(&checkin.Locations)
+
+		resp := models.CheckinResponse{
+			ID:         checkin.ID,
+			UserID:     checkin.UserID,
+			Time:       checkin.Time.Format(time.RFC3339), // Return UTC time with Z
+			Notes:      checkin.Notes,
+			Late:       checkin.Late,
+			LateReason: checkin.LateReason,
+			CreatedAt:  checkin.CreatedAt.Format(time.RFC3339),
+			Locations:  checkin.Locations,
+		}
+		c.JSON(200, resp)
+		return
 	}
+
+	// For existing check-ins (update case), we need to get user timezone for response
+	var user models.User
+	if err := db.DB.First(&user, req.UserID).Error; err != nil {
+		c.JSON(404, models.ErrorResponse{Error: "User not found"})
+		return
+	}
+
 	// Load locations for the response
 	db.DB.Model(&checkin).Association("Locations").Find(&checkin.Locations)
 
 	resp := models.CheckinResponse{
 		ID:         checkin.ID,
 		UserID:     checkin.UserID,
-		Time:       checkin.Time.Format(time.RFC3339),
+		Time:       checkin.Time.Format(time.RFC3339), // Return UTC time with Z
 		Notes:      checkin.Notes,
 		Late:       checkin.Late,
 		LateReason: checkin.LateReason,
@@ -915,16 +1129,17 @@ func parseTimeOrNow(timeStr, dateStr string) time.Time {
 		}
 		for _, layout := range layouts {
 			if t, err := time.Parse(layout, timeStr); err == nil {
-				return t
+				// Ensure we return UTC time
+				return t.UTC()
 			}
 		}
 	}
 	// If no time provided and no date, use current time
 	if dateStr == "" {
-		return time.Now()
+		return time.Now().UTC()
 	}
 	t, _ := time.Parse("2006-01-02 15:04:05", dateStr+" 09:00:00")
-	return t
+	return t.UTC()
 }
 
 // @Summary Get monthly analytics
@@ -1695,5 +1910,222 @@ func getLiveAttendanceStats(c *gin.Context) {
 		"present_today":   present,
 		"absent_today":    absent,
 		"attendance_rate": rate,
+	})
+}
+
+// @Summary Get locations for any check-in (HR/Admin)
+// @Description Get all locations for a specific check-in. HR/Admin only.
+// @Tags dashboard
+// @Produce json
+// @Security BearerAuth
+// @Param checkin_id path int true "Check-in ID"
+// @Success 200 {array} models.CheckinLocation
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/dashboard/locations/{checkin_id} [get]
+func getLocationsForHR(c *gin.Context) {
+	// Check HR/Admin permissions
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "Unauthorized"})
+		return
+	}
+	userClaims := claims.(jwt.MapClaims)
+	role, _ := userClaims["role"].(string)
+	if role != "hr" && role != "admin" {
+		c.JSON(http.StatusForbidden, models.ErrorResponse{Error: "Forbidden: HR or admin only"})
+		return
+	}
+
+	checkinID := c.Param("checkin_id")
+	if checkinID == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Check-in ID is required"})
+		return
+	}
+
+	// Verify check-in exists
+	var checkin models.Checkin
+	if err := db.DB.First(&checkin, checkinID).Error; err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "Check-in not found"})
+		return
+	}
+
+	// Load locations for this check-in
+	var locations []models.CheckinLocation
+	if err := db.DB.Where("checkin_id = ?", checkinID).Find(&locations).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to load locations", Details: err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, locations)
+}
+
+// @Summary Add locations to any check-in (HR/Admin)
+// @Description Add new locations to a specific check-in. HR/Admin only.
+// @Tags dashboard
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param checkin_id path int true "Check-in ID"
+// @Param locations body models.UpdateLocationsRequest true "Locations to add"
+// @Success 200 {object} models.CheckinResponse
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/dashboard/locations/{checkin_id} [put]
+func addLocationsForHR(c *gin.Context) {
+	// Check HR/Admin permissions
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "Unauthorized"})
+		return
+	}
+	userClaims := claims.(jwt.MapClaims)
+	role, _ := userClaims["role"].(string)
+	if role != "hr" && role != "admin" {
+		c.JSON(http.StatusForbidden, models.ErrorResponse{Error: "Forbidden: HR or admin only"})
+		return
+	}
+
+	checkinID := c.Param("checkin_id")
+	if checkinID == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Check-in ID is required"})
+		return
+	}
+
+	var req models.UpdateLocationsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Invalid request", Details: err.Error()})
+		return
+	}
+
+	// Verify check-in exists
+	var checkin models.Checkin
+	if err := db.DB.First(&checkin, checkinID).Error; err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "Check-in not found"})
+		return
+	}
+
+	// Add new locations
+	for _, loc := range req.Locations {
+		location := models.CheckinLocation{
+			CheckinID:      checkin.ID,
+			LocationType:   loc.LocationType,
+			LocationDetail: loc.LocationDetail,
+		}
+		if err := db.DB.Create(&location).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to create location", Details: err.Error()})
+			return
+		}
+	}
+
+	// Load updated locations for response
+	if err := db.DB.Where("checkin_id = ?", checkin.ID).Find(&checkin.Locations).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to load locations", Details: err.Error()})
+		return
+	}
+
+	// Create audit log
+	audit := models.AuditLog{
+		UserEmail:  userClaims["email"].(string),
+		Action:     "add_locations",
+		EntityID:   checkin.ID,
+		EntityType: "checkin",
+		OldValue:   "",
+		NewValue:   fmt.Sprintf("added %d locations", len(req.Locations)),
+		Timestamp:  time.Now(),
+	}
+	if err := db.DB.Create(&audit).Error; err != nil {
+		logger.Log.Error("Failed to create audit log for location addition",
+			zap.Error(err),
+		)
+	}
+
+	var checkoutTime *time.Time
+	if checkin.CheckoutTime != nil {
+		checkoutTime = checkin.CheckoutTime
+	}
+
+	resp := models.CheckinResponse{
+		ID:             checkin.ID,
+		UserID:         checkin.UserID,
+		Time:           checkin.Time.Format(time.RFC3339),
+		Notes:          checkin.Notes,
+		Late:           checkin.Late,
+		LateReason:     checkin.LateReason,
+		CreatedAt:      checkin.CreatedAt.Format(time.RFC3339),
+		CheckoutTime:   checkoutTime,
+		CheckoutStatus: checkin.CheckoutStatus,
+		Overtime:       checkin.Overtime,
+		Locations:      checkin.Locations,
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// @Summary Delete any location (HR/Admin)
+// @Description Delete a specific location from any check-in. HR/Admin only.
+// @Tags dashboard
+// @Produce json
+// @Security BearerAuth
+// @Param location_id path int true "Location ID"
+// @Success 200 {object} models.SimpleResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Router /api/dashboard/locations/{location_id} [delete]
+func deleteLocationForHR(c *gin.Context) {
+	// Check HR/Admin permissions
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "Unauthorized"})
+		return
+	}
+	userClaims := claims.(jwt.MapClaims)
+	role, _ := userClaims["role"].(string)
+	if role != "hr" && role != "admin" {
+		c.JSON(http.StatusForbidden, models.ErrorResponse{Error: "Forbidden: HR or admin only"})
+		return
+	}
+
+	locationID := c.Param("location_id")
+	if locationID == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "Location ID is required"})
+		return
+	}
+
+	// Find and delete the specific location
+	var location models.CheckinLocation
+	err := db.DB.Where("id = ?", locationID).First(&location).Error
+	if err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "Location not found"})
+		return
+	}
+
+	// Create audit log before deletion
+	audit := models.AuditLog{
+		UserEmail:  userClaims["email"].(string),
+		Action:     "delete_location",
+		EntityID:   location.ID,
+		EntityType: "location",
+		OldValue:   fmt.Sprintf("checkin_id:%d,type:%d,detail:%s", location.CheckinID, location.LocationType, location.LocationDetail),
+		NewValue:   "",
+		Timestamp:  time.Now(),
+	}
+	if err := db.DB.Create(&audit).Error; err != nil {
+		logger.Log.Error("Failed to create audit log for location deletion",
+			zap.Error(err),
+		)
+	}
+
+	if err := db.DB.Delete(&location).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "Failed to delete location", Details: err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SimpleResponse{
+		Message: "Location deleted successfully",
+		Success: true,
 	})
 }

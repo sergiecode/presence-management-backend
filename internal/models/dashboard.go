@@ -32,30 +32,31 @@ type AttendanceRow struct {
 // All fields except UserID are pointers so null is possible, and all fields are always present in JSON
 
 type AttendanceResponse struct {
-	UserID           uint       `json:"user_id"`
-	Name             *string    `json:"name"`
-	Email            *string    `json:"email"`
-	CheckinID        *uint      `json:"checkin_id"`
-	CheckinTime      *time.Time `json:"checkin_time"`
-	Late             *bool      `json:"late"`
-	LocationType     *int       `json:"location_type"`
-	LocationDetail   *string    `json:"location_detail"`
-	Notes            *string    `json:"notes"`
-	LateReason       *string    `json:"late_reason"`
-	CheckinCreatedAt *time.Time `json:"checkin_created_at"`
-	AbsenceID        *uint      `json:"absence_id"`
-	AbsenceType      *int       `json:"absence_type"`
-	AbsenceReason    *string    `json:"absence_reason"`
-	FileURL          *string    `json:"file_url"`
-	AbsenceCreatedAt *time.Time `json:"absence_created_at"`
-	CheckoutTime     *time.Time `json:"checkout_time"`
-	CheckoutStatus   *string    `json:"checkout_status"`
-	Overtime         *bool      `json:"overtime"`
+	UserID           uint              `json:"user_id"`
+	Name             *string           `json:"name"`
+	Email            *string           `json:"email"`
+	CheckinID        *uint             `json:"checkin_id"`
+	CheckinTime      *time.Time        `json:"checkin_time"`
+	Late             *bool             `json:"late"`
+	LocationType     *int              `json:"location_type"`
+	LocationDetail   *string           `json:"location_detail"`
+	Locations        []CheckinLocation `json:"locations,omitempty"`
+	Notes            *string           `json:"notes"`
+	LateReason       *string           `json:"late_reason"`
+	CheckinCreatedAt *time.Time        `json:"checkin_created_at"`
+	AbsenceID        *uint             `json:"absence_id"`
+	AbsenceType      *int              `json:"absence_type"`
+	AbsenceReason    *string           `json:"absence_reason"`
+	FileURL          *string           `json:"file_url"`
+	AbsenceCreatedAt *time.Time        `json:"absence_created_at"`
+	CheckoutTime     *time.Time        `json:"checkout_time"`
+	CheckoutStatus   *string           `json:"checkout_status"`
+	Overtime         *bool             `json:"overtime"`
 }
 
 // ToAttendanceResponse converts an AttendanceRow to AttendanceResponse
 func ToAttendanceResponse(row AttendanceRow) AttendanceResponse {
-	return AttendanceResponse{
+	response := AttendanceResponse{
 		UserID:           row.UserID,
 		Name:             &row.Name,
 		Email:            &row.Email,
@@ -76,6 +77,11 @@ func ToAttendanceResponse(row AttendanceRow) AttendanceResponse {
 		CheckoutStatus:   row.CheckoutStatus,
 		Overtime:         row.Overtime,
 	}
+
+	// Initialize empty locations array
+	response.Locations = []CheckinLocation{}
+
+	return response
 }
 
 // ExportCheckinRow is used for exporting checkin data to Excel or JSON
@@ -158,7 +164,7 @@ func ToIndividualAttendanceResponse(user *User, checkin *Checkin, absence *Absen
 		cr := CheckinResponse{
 			ID:             checkin.ID,
 			UserID:         checkin.UserID,
-			Time:           checkin.Time.Format(time.RFC3339),
+			Time:           checkin.Time.Format(time.RFC3339), // Return UTC time with Z
 			Notes:          checkin.Notes,
 			Late:           checkin.Late,
 			LateReason:     checkin.LateReason,
