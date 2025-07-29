@@ -156,6 +156,12 @@ func boolPtr(b bool) *bool    { return &b }
 
 // ToUserResponse converts a User to a UserResponse for consistent API output
 func ToUserResponse(u User) UserResponse {
+	// Check if Location is empty and set to nil if so
+	var locationPtr *Location
+	if u.Location != (Location{}) {
+		locationPtr = &u.Location
+	}
+
 	return UserResponse{
 		ID:                       u.ID,
 		Email:                    u.Email,
@@ -175,7 +181,7 @@ func ToUserResponse(u User) UserResponse {
 		CUIL:                     strPtr(u.CUIL),
 		BirthDate:                u.BirthDate,
 		HireDate:                 u.HireDate,
-		Location:                 &u.Location,
+		Location:                 locationPtr,
 		WeeklyHours:              intPtr(u.WeeklyHours),
 		Notes:                    strPtr(u.Notes),
 		Team:                     strPtr(u.Team),

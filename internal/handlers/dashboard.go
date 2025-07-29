@@ -442,13 +442,13 @@ func getAuditLogs(c *gin.Context) {
 }
 
 // @Summary Export check-ins to Excel (ART format)
-// @Description HR/admin only. Export check-in data as Excel file in ART format with all HR fields. Filters: startDate, endDate, userId
+// @Description HR/admin only. Export check-in data as Excel file in ART format with all HR fields for a specific date. Filters: date, userId
 // @Tags dashboard
 // @Produce application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
-// @Param startDate query string false "Start date (YYYY-MM-DD)"
-// @Param endDate query string false "End date (YYYY-MM-DD)"
+// @Param date query string true "Date (YYYY-MM-DD)"
 // @Param userId query int false "User ID"
 // @Success 200 {file} file
+// @Failure 400 {object} models.ErrorResponse
 // @Failure 401 {object} models.ErrorResponse
 // @Failure 403 {object} models.ErrorResponse
 // @Router /api/dashboard/export/checkins [get]
@@ -464,9 +464,13 @@ func exportCheckinsToExcel(c *gin.Context) {
 		c.JSON(403, gin.H{"error": "Forbidden: HR or admin only"})
 		return
 	}
-	startDate := c.Query("startDate")
-	endDate := c.Query("endDate")
+	date := c.Query("date")
 	userId := c.Query("userId")
+
+	if date == "" {
+		c.JSON(400, gin.H{"error": "Missing date parameter"})
+		return
+	}
 
 	// Build query with user join to get HR fields
 	query := `
@@ -491,29 +495,18 @@ func exportCheckinsToExcel(c *gin.Context) {
 		FROM checkins c
 		JOIN users u ON c.user_id = u.id
 		LEFT JOIN checkin_locations cl ON c.id = cl.checkin_id
-		WHERE c.deleted = false
+		WHERE c.deleted = false AND DATE(c.time) = ?
 	`
 
 	var args []interface{}
-	argCount := 1
+	args = append(args, date)
 
-	if startDate != "" {
-		query += fmt.Sprintf(" AND DATE(c.time) >= $%d", argCount)
-		args = append(args, startDate)
-		argCount++
-	}
-	if endDate != "" {
-		query += fmt.Sprintf(" AND DATE(c.time) <= $%d", argCount)
-		args = append(args, endDate)
-		argCount++
-	}
 	if userId != "" {
-		query += fmt.Sprintf(" AND c.user_id = $%d", argCount)
+		query += " AND c.user_id = ?"
 		args = append(args, userId)
-		argCount++
 	}
 
-	query += " ORDER BY DATE(c.time) DESC, u.name"
+	query += " ORDER BY u.name"
 
 	var rows []models.ExportCheckinRow
 	if err := db.DB.Raw(query, args...).Scan(&rows).Error; err != nil {
@@ -525,42 +518,51 @@ func exportCheckinsToExcel(c *gin.Context) {
 	sheet := "ART_Export"
 	f.SetSheetName("Sheet1", sheet)
 
-	// ART Excel format headers (Spanish)
+	// Add company header information
+	f.SetCellValue(sheet, "A1", "ABSTI SA")
+	f.SetCellValue(sheet, "B1", "30-70940707-0")
+	f.SetCellValue(sheet, "C1", "")
+	f.SetCellValue(sheet, "D1", "")
+	f.SetCellValue(sheet, "E1", "")
+	f.SetCellValue(sheet, "F1", "")
+	f.SetCellValue(sheet, "G1", "")
+	f.SetCellValue(sheet, "H1", "")
+	f.SetCellValue(sheet, "I1", "Tte. Gral. Juan Domingo Peron 430, CABA (C1038AAJ)")
+
+	// Add date of update
+	f.SetCellValue(sheet, "A2", "FECHA DE ACTUALIZACION:")
+	f.SetCellValue(sheet, "B2", time.Now().Format("02/01/2006"))
+
+	// Add empty row
+	f.SetCellValue(sheet, "A4", "")
+
+	// ART Excel format headers (Spanish) - Simplified for ART requirements
 	headers := []string{
-		"Empleado",             // Employee name
-		"DNI",                  // National ID
-		"CUIL",                 // Tax ID
-		"Fecha Nac.",           // Birth date
-		"Fecha Ingreso",        // Hire date
-		"Domicilio HO/Oficina", // Home/Office address
-		"Dias",                 // Days (we'll use check-in date)
-		"Hrs Semanales",        // Weekly hours
-		"Aclaraciones",         // Notes
-		"Fecha Check-in",       // Check-in date
-		"Hora Check-in",        // Check-in time
-		"Tipo Ubicación",       // Location type
-		"Detalle Ubicación",    // Location detail
-		"Tarde",                // Late
-		"Motivo Tarde",         // Late reason
-		"Hora Check-out",       // Check-out time
-		"Estado Check-out",     // Check-out status
-		"Horas Extra",          // Overtime
+		"Empleado",               // Employee name
+		"DNI",                    // National ID
+		"CUIL",                   // Tax ID
+		"Fecha Nac.",             // Birth date
+		"Fecha Ingreso",          // Hire date
+		"Domicilio HO / Oficina", // Home/Office address
+		"Dias",                   // Days
+		"Hrs Semanales",          // Weekly hours
+		"Aclaraciones",           // Notes
 	}
 
-	// Set headers
+	// Set headers (starting from row 5)
 	headerStyle, _ := f.NewStyle(&excelize.Style{
 		Font: &excelize.Font{Bold: true},
 		Fill: excelize.Fill{Type: "pattern", Color: []string{"#E0E0E0"}, Pattern: 1},
 	})
 	for i, h := range headers {
-		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		cell, _ := excelize.CoordinatesToCellName(i+1, 5)
 		f.SetCellValue(sheet, cell, h)
 		f.SetCellStyle(sheet, cell, cell, headerStyle)
 	}
 
-	// Fill data rows
+	// Fill data rows (starting from row 6)
 	for row, data := range rows {
-		rowNum := row + 2
+		rowNum := row + 6
 
 		// Format location as string
 		locationStr := ""
@@ -586,34 +588,32 @@ func exportCheckinsToExcel(c *gin.Context) {
 			hireDateStr = data.HireDate.Format("02/01/2006")
 		}
 
-		checkoutTimeStr := ""
-		if data.CheckoutTime != nil {
-			checkoutTimeStr = data.CheckoutTime.Format("15:04")
+		// Set cell values - only the simplified ART columns
+		if data.Empleado != nil {
+			f.SetCellValue(sheet, fmt.Sprintf("A%d", rowNum), *data.Empleado)
 		}
-
-		// Set cell values
-		f.SetCellValue(sheet, fmt.Sprintf("A%d", rowNum), data.Empleado)
-		f.SetCellValue(sheet, fmt.Sprintf("B%d", rowNum), data.DNI)
-		f.SetCellValue(sheet, fmt.Sprintf("C%d", rowNum), data.CUIL)
+		if data.DNI != nil {
+			f.SetCellValue(sheet, fmt.Sprintf("B%d", rowNum), *data.DNI)
+		}
+		if data.CUIL != nil {
+			f.SetCellValue(sheet, fmt.Sprintf("C%d", rowNum), *data.CUIL)
+		}
 		f.SetCellValue(sheet, fmt.Sprintf("D%d", rowNum), birthDateStr)
 		f.SetCellValue(sheet, fmt.Sprintf("E%d", rowNum), hireDateStr)
 		f.SetCellValue(sheet, fmt.Sprintf("F%d", rowNum), locationStr)
-		f.SetCellValue(sheet, fmt.Sprintf("G%d", rowNum), data.Date) // Days column uses check-in date
-		f.SetCellValue(sheet, fmt.Sprintf("H%d", rowNum), data.HrsSemanales)
-		f.SetCellValue(sheet, fmt.Sprintf("I%d", rowNum), data.Aclaraciones)
-		f.SetCellValue(sheet, fmt.Sprintf("J%d", rowNum), data.Date)
-		f.SetCellValue(sheet, fmt.Sprintf("K%d", rowNum), data.Time.Format("15:04"))
-		f.SetCellValue(sheet, fmt.Sprintf("L%d", rowNum), data.LocationType)
-		f.SetCellValue(sheet, fmt.Sprintf("M%d", rowNum), data.LocationDetail)
-		f.SetCellValue(sheet, fmt.Sprintf("N%d", rowNum), data.Late)
-		f.SetCellValue(sheet, fmt.Sprintf("O%d", rowNum), data.LateReason)
-		f.SetCellValue(sheet, fmt.Sprintf("P%d", rowNum), checkoutTimeStr)
-		f.SetCellValue(sheet, fmt.Sprintf("Q%d", rowNum), data.CheckoutStatus)
-		f.SetCellValue(sheet, fmt.Sprintf("R%d", rowNum), data.Overtime)
+		if data.Date != nil {
+			f.SetCellValue(sheet, fmt.Sprintf("G%d", rowNum), *data.Date) // Days column uses check-in date
+		}
+		if data.HrsSemanales != nil {
+			f.SetCellValue(sheet, fmt.Sprintf("H%d", rowNum), *data.HrsSemanales)
+		}
+		if data.Aclaraciones != nil {
+			f.SetCellValue(sheet, fmt.Sprintf("I%d", rowNum), *data.Aclaraciones)
+		}
 	}
 
-	// Auto-fit columns
-	for i := 1; i <= len(headers); i++ {
+	// Auto-fit columns (only the 9 ART columns)
+	for i := 1; i <= 9; i++ {
 		col, _ := excelize.ColumnNumberToName(i)
 		f.SetColWidth(sheet, col, col, 15)
 	}
@@ -1548,42 +1548,51 @@ func exportAttendanceToExcel(c *gin.Context) {
 	sheet := "ART_Export"
 	f.SetSheetName("Sheet1", sheet)
 
-	// ART Excel format headers (Spanish)
+	// Add company header information
+	f.SetCellValue(sheet, "A1", "ABSTI SA")
+	f.SetCellValue(sheet, "B1", "30-70940707-0")
+	f.SetCellValue(sheet, "C1", "")
+	f.SetCellValue(sheet, "D1", "")
+	f.SetCellValue(sheet, "E1", "")
+	f.SetCellValue(sheet, "F1", "")
+	f.SetCellValue(sheet, "G1", "")
+	f.SetCellValue(sheet, "H1", "")
+	f.SetCellValue(sheet, "I1", "Tte. Gral. Juan Domingo Peron 430, CABA (C1038AAJ)")
+
+	// Add date of update
+	f.SetCellValue(sheet, "A2", "FECHA DE ACTUALIZACION:")
+	f.SetCellValue(sheet, "B2", time.Now().Format("02/01/2006"))
+
+	// Add empty row
+	f.SetCellValue(sheet, "A4", "")
+
+	// ART Excel format headers (Spanish) - Simplified for ART requirements
 	headers := []string{
-		"Empleado",             // Employee name
-		"DNI",                  // National ID
-		"CUIL",                 // Tax ID
-		"Fecha Nac.",           // Birth date
-		"Fecha Ingreso",        // Hire date
-		"Domicilio HO/Oficina", // Home/Office address
-		"Dias",                 // Days (we'll use check-in date)
-		"Hrs Semanales",        // Weekly hours
-		"Aclaraciones",         // Notes
-		"Fecha Check-in",       // Check-in date
-		"Hora Check-in",        // Check-in time
-		"Tipo Ubicación",       // Location type
-		"Detalle Ubicación",    // Location detail
-		"Tarde",                // Late
-		"Motivo Tarde",         // Late reason
-		"Hora Check-out",       // Check-out time
-		"Estado Check-out",     // Check-out status
-		"Horas Extra",          // Overtime
+		"Empleado",               // Employee name
+		"DNI",                    // National ID
+		"CUIL",                   // Tax ID
+		"Fecha Nac.",             // Birth date
+		"Fecha Ingreso",          // Hire date
+		"Domicilio HO / Oficina", // Home/Office address
+		"Dias",                   // Days
+		"Hrs Semanales",          // Weekly hours
+		"Aclaraciones",           // Notes
 	}
 
-	// Set headers
+	// Set headers (starting from row 5)
 	headerStyle, _ := f.NewStyle(&excelize.Style{
 		Font: &excelize.Font{Bold: true},
 		Fill: excelize.Fill{Type: "pattern", Color: []string{"#E0E0E0"}, Pattern: 1},
 	})
 	for i, h := range headers {
-		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		cell, _ := excelize.CoordinatesToCellName(i+1, 5)
 		f.SetCellValue(sheet, cell, h)
 		f.SetCellStyle(sheet, cell, cell, headerStyle)
 	}
 
-	// Fill data rows
+	// Fill data rows (starting from row 6)
 	for row, data := range rows {
-		rowNum := row + 2
+		rowNum := row + 6
 
 		// Format location as string
 		locationStr := ""
@@ -1609,42 +1618,36 @@ func exportAttendanceToExcel(c *gin.Context) {
 			hireDateStr = data.HireDate.Format("02/01/2006")
 		}
 
-		checkoutTimeStr := ""
-		if data.CheckoutTime != nil {
-			checkoutTimeStr = data.CheckoutTime.Format("15:04")
-		}
-
-		// Format check-in date and time
+		// Format check-in date for days column
 		checkinDateStr := ""
-		checkinTimeStr := ""
 		if data.CheckinTime != nil {
 			checkinDateStr = data.CheckinTime.Format("2006-01-02")
-			checkinTimeStr = data.CheckinTime.Format("15:04")
 		}
 
-		// Set cell values
-		f.SetCellValue(sheet, fmt.Sprintf("A%d", rowNum), data.Empleado)
-		f.SetCellValue(sheet, fmt.Sprintf("B%d", rowNum), data.DNI)
-		f.SetCellValue(sheet, fmt.Sprintf("C%d", rowNum), data.CUIL)
+		// Set cell values - only the simplified ART columns
+		if data.Empleado != nil {
+			f.SetCellValue(sheet, fmt.Sprintf("A%d", rowNum), *data.Empleado)
+		}
+		if data.DNI != nil {
+			f.SetCellValue(sheet, fmt.Sprintf("B%d", rowNum), *data.DNI)
+		}
+		if data.CUIL != nil {
+			f.SetCellValue(sheet, fmt.Sprintf("C%d", rowNum), *data.CUIL)
+		}
 		f.SetCellValue(sheet, fmt.Sprintf("D%d", rowNum), birthDateStr)
 		f.SetCellValue(sheet, fmt.Sprintf("E%d", rowNum), hireDateStr)
 		f.SetCellValue(sheet, fmt.Sprintf("F%d", rowNum), locationStr)
 		f.SetCellValue(sheet, fmt.Sprintf("G%d", rowNum), checkinDateStr) // Days column uses check-in date
-		f.SetCellValue(sheet, fmt.Sprintf("H%d", rowNum), data.HrsSemanales)
-		f.SetCellValue(sheet, fmt.Sprintf("I%d", rowNum), data.Aclaraciones)
-		f.SetCellValue(sheet, fmt.Sprintf("J%d", rowNum), checkinDateStr)
-		f.SetCellValue(sheet, fmt.Sprintf("K%d", rowNum), checkinTimeStr)
-		f.SetCellValue(sheet, fmt.Sprintf("L%d", rowNum), data.LocationType)
-		f.SetCellValue(sheet, fmt.Sprintf("M%d", rowNum), data.LocationDetail)
-		f.SetCellValue(sheet, fmt.Sprintf("N%d", rowNum), data.Late)
-		f.SetCellValue(sheet, fmt.Sprintf("O%d", rowNum), data.LateReason)
-		f.SetCellValue(sheet, fmt.Sprintf("P%d", rowNum), checkoutTimeStr)
-		f.SetCellValue(sheet, fmt.Sprintf("Q%d", rowNum), data.CheckoutStatus)
-		f.SetCellValue(sheet, fmt.Sprintf("R%d", rowNum), data.Overtime)
+		if data.HrsSemanales != nil {
+			f.SetCellValue(sheet, fmt.Sprintf("H%d", rowNum), *data.HrsSemanales)
+		}
+		if data.Aclaraciones != nil {
+			f.SetCellValue(sheet, fmt.Sprintf("I%d", rowNum), *data.Aclaraciones)
+		}
 	}
 
-	// Auto-fit columns
-	for i := 1; i <= len(headers); i++ {
+	// Auto-fit columns (only the 9 ART columns)
+	for i := 1; i <= 9; i++ {
 		col, _ := excelize.ColumnNumberToName(i)
 		f.SetColWidth(sheet, col, col, 15)
 	}
