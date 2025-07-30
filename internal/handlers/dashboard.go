@@ -36,7 +36,7 @@ func RegisterDashboardRoutes(r *gin.RouterGroup) {
 	r.GET("/attendance/individual", getIndividualAttendance)
 	r.GET("/attendance/daily-summary", getDailySummary)
 	r.GET("/attendance/live-stats", getLiveAttendanceStats)
-	// r.GET("/checkins/view", getCheckinsView)
+	r.GET("/checkins/view", getCheckinsView)
 	r.GET("/users/by-team", getUsersByTeam)
 
 	// Export endpoints
@@ -83,9 +83,9 @@ func getAttendanceStats(c *gin.Context) {
 	}
 	startDate, endDate := parseDateRange(c)
 	var total, onTime, late int64
-	db.DB.Model(&models.Checkin{}).Where("date >= ? AND date <= ?", startDate, endDate).Count(&total)
-	db.DB.Model(&models.Checkin{}).Where("date >= ? AND date <= ? AND late = ?", startDate, endDate, false).Count(&onTime)
-	db.DB.Model(&models.Checkin{}).Where("date >= ? AND date <= ? AND late = ?", startDate, endDate, true).Count(&late)
+	db.DB.Model(&models.Checkin{}).Where("DATE(time) >= ? AND DATE(time) <= ?", startDate, endDate).Count(&total)
+	db.DB.Model(&models.Checkin{}).Where("DATE(time) >= ? AND DATE(time) <= ? AND late = ?", startDate, endDate, false).Count(&onTime)
+	db.DB.Model(&models.Checkin{}).Where("DATE(time) >= ? AND DATE(time) <= ? AND late = ?", startDate, endDate, true).Count(&late)
 	pct := func(n, d int64) float64 {
 		if d == 0 {
 			return 0
@@ -689,7 +689,7 @@ func getAttendance(c *gin.Context) {
 		SELECT COUNT(*)
 		FROM users u
 		WHERE u.active = true AND u.pending_approval = false
-	`, date, date).Scan(&total)
+	`).Scan(&total)
 
 	// First, get the basic attendance data without locations
 	var rows []models.AttendanceRow
@@ -810,45 +810,45 @@ func getDailySummary(c *gin.Context) {
 	c.JSON(200, summary)
 }
 
-// // @Summary Get all checkins for a date (view)
-// // @Description Returns all checkins for a given date from daily_checkins_view. HR/admin only.
-// // @Tags dashboard
-// // @Produce json
-// // @Security BearerAuth
-// // @Param date query string true "Date (YYYY-MM-DD)"
-// // @Success 200 {array} map[string]interface{}
-// // @Failure 400 {object} models.ErrorResponse
-// // @Failure 401 {object} models.ErrorResponse
-// // @Failure 403 {object} models.ErrorResponse
-// // @Router /api/dashboard/checkins/view [get]
-// func getCheckinsView(c *gin.Context) {
-// 	claims, ok := c.Get("user")
-// 	if !ok {
-// 		c.JSON(401, models.ErrorResponse{Error: "Unauthorized"})
-// 		return
-// 	}
-// 	userClaims := claims.(jwt.MapClaims)
-// 	role, _ := userClaims["role"].(string)
-// 	if role != "hr" && role != "admin" {
-// 		c.JSON(403, models.ErrorResponse{Error: "Forbidden: HR or admin only"})
-// 		return
-// 	}
-// 	date := c.Query("date")
-// 	if date == "" {
-// 		c.JSON(400, models.ErrorResponse{Error: "Missing date"})
-// 		return
-// 	}
-// 	// Initialize as empty slice to ensure we always return an array, not null
-// 	rows := make([]map[string]interface{}, 0)
-// 	err := db.DB.Raw("SELECT * FROM daily_checkins_view WHERE date = ?", date).Scan(&rows).Error
-// 	if err != nil {
-// 		c.JSON(500, models.ErrorResponse{Error: "Failed to fetch checkins view", Details: err.Error()})
-// 		return
-// 	}
+// @Summary Get all checkins for a date (view)
+// @Description Returns all checkins for a given date from daily_checkins_view. HR/admin only.
+// @Tags dashboard
+// @Produce json
+// @Security BearerAuth
+// @Param date query string true "Date (YYYY-MM-DD)"
+// @Success 200 {array} map[string]interface{}
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/dashboard/checkins/view [get]
+func getCheckinsView(c *gin.Context) {
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(401, models.ErrorResponse{Error: "Unauthorized"})
+		return
+	}
+	userClaims := claims.(jwt.MapClaims)
+	role, _ := userClaims["role"].(string)
+	if role != "hr" && role != "admin" {
+		c.JSON(403, models.ErrorResponse{Error: "Forbidden: HR or admin only"})
+		return
+	}
+	date := c.Query("date")
+	if date == "" {
+		c.JSON(400, models.ErrorResponse{Error: "Missing date"})
+		return
+	}
+	// Initialize as empty slice to ensure we always return an array, not null
+	rows := make([]map[string]interface{}, 0)
+	err := db.DB.Raw("SELECT * FROM daily_checkins_view WHERE date = ?", date).Scan(&rows).Error
+	if err != nil {
+		c.JSON(500, models.ErrorResponse{Error: "Failed to fetch checkins view", Details: err.Error()})
+		return
+	}
 
-// 	// Always return an array, even if empty
-// 	c.JSON(200, rows)
-// }
+	// Always return an array, even if empty
+	c.JSON(200, rows)
+}
 
 // @Summary Get individual attendance (checkin + absence + user)
 // @Description Returns checkin, absence, and user info for a given user/date. HR/admin only.
