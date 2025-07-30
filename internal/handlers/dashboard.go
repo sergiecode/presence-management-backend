@@ -36,7 +36,7 @@ func RegisterDashboardRoutes(r *gin.RouterGroup) {
 	r.GET("/attendance/individual", getIndividualAttendance)
 	r.GET("/attendance/daily-summary", getDailySummary)
 	r.GET("/attendance/live-stats", getLiveAttendanceStats)
-	r.GET("/checkins/view", getCheckinsView)
+	// r.GET("/checkins/view", getCheckinsView)
 	r.GET("/users/by-team", getUsersByTeam)
 
 	// Export endpoints
@@ -810,45 +810,45 @@ func getDailySummary(c *gin.Context) {
 	c.JSON(200, summary)
 }
 
-// @Summary Get all checkins for a date (view)
-// @Description Returns all checkins for a given date from daily_checkins_view. HR/admin only.
-// @Tags dashboard
-// @Produce json
-// @Security BearerAuth
-// @Param date query string true "Date (YYYY-MM-DD)"
-// @Success 200 {array} map[string]interface{}
-// @Failure 400 {object} models.ErrorResponse
-// @Failure 401 {object} models.ErrorResponse
-// @Failure 403 {object} models.ErrorResponse
-// @Router /api/dashboard/checkins/view [get]
-func getCheckinsView(c *gin.Context) {
-	claims, ok := c.Get("user")
-	if !ok {
-		c.JSON(401, models.ErrorResponse{Error: "Unauthorized"})
-		return
-	}
-	userClaims := claims.(jwt.MapClaims)
-	role, _ := userClaims["role"].(string)
-	if role != "hr" && role != "admin" {
-		c.JSON(403, models.ErrorResponse{Error: "Forbidden: HR or admin only"})
-		return
-	}
-	date := c.Query("date")
-	if date == "" {
-		c.JSON(400, models.ErrorResponse{Error: "Missing date"})
-		return
-	}
-	// Initialize as empty slice to ensure we always return an array, not null
-	rows := make([]map[string]interface{}, 0)
-	err := db.DB.Raw("SELECT * FROM daily_checkins_view WHERE date = ?", date).Scan(&rows).Error
-	if err != nil {
-		c.JSON(500, models.ErrorResponse{Error: "Failed to fetch checkins view", Details: err.Error()})
-		return
-	}
+// // @Summary Get all checkins for a date (view)
+// // @Description Returns all checkins for a given date from daily_checkins_view. HR/admin only.
+// // @Tags dashboard
+// // @Produce json
+// // @Security BearerAuth
+// // @Param date query string true "Date (YYYY-MM-DD)"
+// // @Success 200 {array} map[string]interface{}
+// // @Failure 400 {object} models.ErrorResponse
+// // @Failure 401 {object} models.ErrorResponse
+// // @Failure 403 {object} models.ErrorResponse
+// // @Router /api/dashboard/checkins/view [get]
+// func getCheckinsView(c *gin.Context) {
+// 	claims, ok := c.Get("user")
+// 	if !ok {
+// 		c.JSON(401, models.ErrorResponse{Error: "Unauthorized"})
+// 		return
+// 	}
+// 	userClaims := claims.(jwt.MapClaims)
+// 	role, _ := userClaims["role"].(string)
+// 	if role != "hr" && role != "admin" {
+// 		c.JSON(403, models.ErrorResponse{Error: "Forbidden: HR or admin only"})
+// 		return
+// 	}
+// 	date := c.Query("date")
+// 	if date == "" {
+// 		c.JSON(400, models.ErrorResponse{Error: "Missing date"})
+// 		return
+// 	}
+// 	// Initialize as empty slice to ensure we always return an array, not null
+// 	rows := make([]map[string]interface{}, 0)
+// 	err := db.DB.Raw("SELECT * FROM daily_checkins_view WHERE date = ?", date).Scan(&rows).Error
+// 	if err != nil {
+// 		c.JSON(500, models.ErrorResponse{Error: "Failed to fetch checkins view", Details: err.Error()})
+// 		return
+// 	}
 
-	// Always return an array, even if empty
-	c.JSON(200, rows)
-}
+// 	// Always return an array, even if empty
+// 	c.JSON(200, rows)
+// }
 
 // @Summary Get individual attendance (checkin + absence + user)
 // @Description Returns checkin, absence, and user info for a given user/date. HR/admin only.
@@ -1887,31 +1887,132 @@ func createAbsenceForHR(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+// @Summary Get live attendance statistics
+// @Description Returns live attendance statistics for today or a specific date. HR/admin only.
+// @Tags dashboard
+// @Produce json
+// @Security BearerAuth
+// @Param date query string false "Date (YYYY-MM-DD). Defaults to today if not provided"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
+// @Router /api/dashboard/attendance/live-stats [get]
 func getLiveAttendanceStats(c *gin.Context) {
+	// Check HR/Admin permissions
+	claims, ok := c.Get("user")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "Unauthorized"})
+		return
+	}
+	userClaims := claims.(jwt.MapClaims)
+	role, _ := userClaims["role"].(string)
+	if role != "hr" && role != "admin" {
+		c.JSON(http.StatusForbidden, models.ErrorResponse{Error: "Forbidden: HR or admin only"})
+		return
+	}
+
+	// Get date from query parameter, default to today
+	date := c.Query("date")
+	if date == "" {
+		date = time.Now().Format("2006-01-02")
+	}
+
+	// Validate date format
+	if !ValidateYYYYMMDD(date) {
+		c.JSON(400, models.ErrorResponse{Error: "Invalid date format. Use YYYY-MM-DD"})
+		return
+	}
+
 	today := time.Now().Format("2006-01-02")
-	var total, present, absent int64
 
+	// If requesting today's stats, use live calculation
+	if date == today {
+		var total, present, absent int64
+
+		db.DB.Model(&models.User{}).Where("active = ?", true).Count(&total)
+		db.DB.Model(&models.Checkin{}).
+			Where("DATE(time) = ?", date).
+			Where("deleted = ?", false).
+			Distinct("user_id").
+			Count(&present)
+		db.DB.Raw(`
+			SELECT COUNT(*) FROM users WHERE active = true AND id NOT IN (
+				SELECT user_id FROM checkins WHERE DATE(time) = ? AND deleted = false
+			)
+		`, date).Scan(&absent)
+
+		rate := 0.0
+		if total > 0 {
+			rate = float64(present) / float64(total) * 100
+		}
+
+		c.JSON(200, gin.H{
+			"total_employees": total,
+			"present_today":   present,
+			"absent_today":    absent,
+			"attendance_rate": rate,
+		})
+		return
+	}
+
+	// For historical dates, use daily summary
+	var summary models.DailySummary
+	err := db.DB.Where("date = ?", date).First(&summary).Error
+	if err != nil {
+		// If no summary exists for this date, calculate it on-the-fly
+		var total, present, absent, late, overtime int64
+
+		db.DB.Model(&models.User{}).Where("active = ?", true).Count(&total)
+		db.DB.Model(&models.Checkin{}).
+			Where("DATE(time) = ?", date).
+			Where("deleted = ?", false).
+			Distinct("user_id").
+			Count(&present)
+		db.DB.Raw(`
+			SELECT COUNT(*) FROM users WHERE active = true AND id NOT IN (
+				SELECT user_id FROM checkins WHERE DATE(time) = ? AND deleted = false
+			)
+		`, date).Scan(&absent)
+		db.DB.Model(&models.Checkin{}).
+			Where("DATE(time) = ? AND late = ? AND deleted = ?", date, true, false).
+			Count(&late)
+		db.DB.Model(&models.Checkin{}).
+			Where("DATE(time) = ? AND overtime = ? AND deleted = ?", date, true, false).
+			Count(&overtime)
+
+		rate := 0.0
+		if total > 0 {
+			rate = float64(present) / float64(total) * 100
+		}
+
+		c.JSON(200, gin.H{
+			"total_employees": total,
+			"present_today":   present,
+			"absent_today":    absent,
+			"late_count":      late,
+			"overtime_count":  overtime,
+			"attendance_rate": rate,
+		})
+		return
+	}
+
+	// Use daily summary data
+	var total int64
 	db.DB.Model(&models.User{}).Where("active = ?", true).Count(&total)
-	db.DB.Model(&models.Checkin{}).
-		Where("DATE(time) = ?", today).
-		Where("deleted = ?", false).
-		Distinct("user_id").
-		Count(&present)
-	db.DB.Raw(`
-		SELECT COUNT(*) FROM users WHERE active = true AND id NOT IN (
-			SELECT user_id FROM checkins WHERE DATE(time) = ? AND deleted = false
-		)
-	`, today).Scan(&absent)
 
+	absent := total - int64(summary.TotalCheckins)
 	rate := 0.0
 	if total > 0 {
-		rate = float64(present) / float64(total) * 100
+		rate = float64(summary.TotalCheckins) / float64(total) * 100
 	}
 
 	c.JSON(200, gin.H{
 		"total_employees": total,
-		"present_today":   present,
+		"present_today":   summary.TotalCheckins,
 		"absent_today":    absent,
+		"late_count":      summary.TotalLate,
+		"overtime_count":  summary.TotalOvertime,
 		"attendance_rate": rate,
 	})
 }

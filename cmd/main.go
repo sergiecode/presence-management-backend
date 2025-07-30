@@ -129,9 +129,12 @@ func main() {
 		return
 	}
 
+	// Load environment variables from .env and config.env files
 	err := godotenv.Load()
 	if err != nil {
-		log.Println("No .env file found or error loading .env")
+		log.Println("No .env file found, using system environment variables")
+	} else {
+		log.Println("Successfully loaded .env")
 	}
 
 	if err := db.Connect(); err != nil {

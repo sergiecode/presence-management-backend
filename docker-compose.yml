@@ -1,53 +1,32 @@
 version: "3.8"
 
 services:
-  db:
-    image: postgres:15
-    container_name: absti-db
-    restart: always
-    environment:
-      POSTGRES_DB: absti
-      POSTGRES_USER: abstiuser
-      POSTGRES_PASSWORD: abstipass
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U abstiuser -d absti"]
-      interval: 15s
-      timeout: 15s
-      retries: 5
-
   api:
     build: .
     container_name: absti-api
     restart: always
-    depends_on:
-      db:
-        condition: service_healthy
+    env_file:
+      - .env
     environment:
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_USER: abstiuser
-      DB_PASSWORD: abstipass
-      DB_NAME: absti
-      POSTGRES_DB: absti
-      POSTGRES_USER: abstiuser
-      POSTGRES_PASSWORD: abstipass
-      # GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
-      # GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
-      # GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI}
-      PORT: 8080
-      # EMAIL_HOST: smtp.mailgun.org
-      # EMAIL_PORT: 587
+      # Database configuration (can be overridden by .env file)
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      # Server configuration
+      PORT: ${PORT:-8080}
+      # JWT configuration
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRATION: ${JWT_EXPIRATION}
+      # # Email configuration (optional)
+      # EMAIL_HOST: ${EMAIL_HOST}
+      # EMAIL_PORT: ${EMAIL_PORT:-587}
       # EMAIL_USER: ${EMAIL_USER}
       # EMAIL_PASSWORD: ${EMAIL_PASSWORD}
       # EMAIL_FROM: ${EMAIL_FROM}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - "8080:8080"
     working_dir: /app
     command: ./absti-api
-
-volumes:
-  pgdata:
